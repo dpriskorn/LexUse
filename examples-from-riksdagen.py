@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+import datetime
 import requests
 from pprint import pprint
 import re
 import logging
-import LexData
+# import LexData
 # from LexData.language import sv
 from wikibaseintegrator import wbi_core, wbi_login
 
@@ -123,21 +124,50 @@ def add_usage_example(
 ):
     # get the session from wbi
     session = login_instance.get_session()
-    # open lexeme
-    claim = wbi_core.MonolingualText(
-        prop_no="P5831",
-        text=sentence,
-        language="sv",
-        references=[list(wbi_core.ItemID(
-            prop_nr="P8433", value=document_id
-        ))]
+
+    # wbi code
+    link_to_form = wbi_core.Form(
+        prop_nr="P5830",
+        value=form,
+        is_qualifier=True
     )
-    print(claim.get_json_representation)
-    item = wbi_core.ItemEngine(date=claim, item_id=lid)
-    print(item.get_json_representation)
+    reference = [
+        wbi_core.ItemID(
+            prop_nr="P248",  # Stated in Riksdagen open data portal
+            value="Q21592569",
+            is_reference=True
+        ),
+        wbi_core.ExternalID(
+            prop_nr="P8433",  # Riksdagen Document ID
+            value=document_id,
+            is_reference=True
+        ),
+        wbi_core.Time(
+            prop_nr="P813",  # Fetched today
+            time=datetime.datetime.utcnow().replace(
+                tzinfo=datetime.timezone.utc
+            ).replace(
+                hour=0,
+                minute=0,
+                second=0,
+            ).strftime("+%Y-%m-%dT%H:%M:%SZ"),
+            is_reference=True,
+        )
+    ]
+    claim = wbi_core.MonolingualText(
+        sentence,
+        "P5831",
+        language="sv",
+        qualifiers=[link_to_form],
+        references=[reference],
+    )
+    # print(claim)
+    print(claim.get_json_representation())
+    item = wbi_core.ItemEngine(data=[claim], item_id=lid)
+    # print(item.get_json_representation())
     result = item.write(
         login_instance,
-        edit_summary="Added usage example with help of the rikslex script"
+        edit_summary="Added usage example with [[Wikidata:rikslex]]"
     )
     print(result)
 
