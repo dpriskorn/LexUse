@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
 import datetime
 import requests
-from pprint import pprint
+# from pprint import pprint
 import re
-import logging
 # import LexData
-# from LexData.language import sv
+# import logging
 from wikibaseintegrator import wbi_core, wbi_login
 
 import config
 
-logging.basicConfig(level=logging.INFO)
-
-# Authenticate with WikibaseIntegrator
-global login_instance
-login_instance = wbi_login.Login(user=config.username, pwd=config.password)
-
-# This enables finding example sentences via the Riksdagen API where everything
-# is CC0
+# This script enables finding example sentences via the Riksdagen API where
+# everything is CC0
 
 # Pseudo code
 # fetch a list of swedish lexeme forms and words
@@ -26,12 +19,27 @@ login_instance = wbi_login.Login(user=config.username, pwd=config.password)
 #  extract sentence
 #  present for approval
 #    if approved
-#      upload to LID and add "demonstrates form"
+#      add "demonstrates form"
+#      add "demonstrates sense"
+#      add a reference
+#      upload to WD
 
-# Constants
-riksdagen_url = "http://data.riksdagen.se/dokument/"
-global repo
-repo = None
+# Settings
+language = "swedish"
+# Logging for LexData
+# logging.basicConfig(level=logging.INFO)
+
+#
+# Instantiation
+#
+# Authenticate with WikibaseIntegrator
+global login_instance
+login_instance = wbi_login.Login(user=config.username, pwd=config.password)
+
+
+#
+# Functions
+#
 
 
 def yes_no_question(message: str):
@@ -59,22 +67,21 @@ def fetch():
     WHERE {
       ?l a ontolex:LexicalEntry; dct:language wd:Q9027.
       VALUES ?excluded {
+        # exclude affixes and interfix
         wd:Q62155
         wd:Q134830
         wd:Q102047
       }
       MINUS {?l wdt:P31 ?excluded.}
-      MINUS {?l wdt:P5831 ?example.}
+
+      # We want only lexemes with both forms and at least one sense
       ?l ontolex:lexicalForm ?form.
-      VALUES ?features {
-        wd:Q110786
-        wd:Q53997851
-        wd:Q53997857
-        wd:Q131105
-        wd:Q146786
-        wd:Q146233
-      }
-      ?form wikibase:grammaticalFeature ?features.
+      ?l ontolex:lexicalSense [].
+      # This remove all lexemes with at least one example which is not
+      # optimal
+      MINUS {?l wdt:P5831 ?example.}
+      ?form wikibase:grammaticalFeature [].
+      # We extract the word of the form
       ?form ontolex:representation ?word.
       SERVICE wikibase:label
       { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }
@@ -83,10 +90,15 @@ def fetch():
     '''
     r = requests.get(url, params={'format': 'json', 'query': query})
     data = r.json()
-    pprint(data)
+    # pprint(data)
     results = data["results"]["bindings"]
     # pprint(results)
-    return results
+    if len(results) == 0:
+        print(f"No {language} lexemes containing both a sense, forms with " +
+              "grammatical features and missing a usage example was found")
+        exit(0)
+    else:
+        return results
 
 
 def extract_data(result):
@@ -122,10 +134,7 @@ def add_usage_example(
         form=None,
         word=None,
 ):
-    # get the session from wbi
-    session = login_instance.get_session()
-
-    # wbi code
+    # Use WikibaseIntegrator aka wbi to upload the changes
     link_to_form = wbi_core.Form(
         prop_nr="P5830",
         value=form,
