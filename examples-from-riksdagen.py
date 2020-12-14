@@ -135,6 +135,7 @@ def add_usage_example(
         sentence=None,
         lid=None,
         form=None,
+        sense=None,
         word=None,
 ):
     # Use WikibaseIntegrator aka wbi to upload the changes
@@ -143,6 +144,7 @@ def add_usage_example(
         value=form,
         is_qualifier=True
     )
+    # TODO add sense here
     reference = [
         wbi_core.ItemID(
             prop_nr="P248",  # Stated in Riksdagen open data portal
@@ -236,17 +238,25 @@ def parse_lexeme_data(results):
                     summary=summary
                 )
                 if sentence:
-                    if yes_no_question(
-                            "Do you want to add this sentence: \n" +
-                            f"{sentence}\nto the lexeme form {word}."
-                    ):
-                        add_usage_example(
-                            document_id=riksdagen_document_id,
-                            sentence=sentence,
-                            lid=lid,
-                            form=form,
-                            word=word,
-                        )
+                    print("Saving to wikidata is disabled until linking with" +
+                          " a sense is implemented")
+                    # TODO add fetching the senses and presenting them to the
+                    # user for picking the right one if there is >1
+
+                    # if yes_no_question(
+                    #         "Do you want to add this sentence: \n" +
+                    #         f"{sentence}\nto the lexeme form {word}."
+                    # ):
+                    #     add_usage_example(
+                    #         document_id=riksdagen_document_id,
+                    #         sentence=sentence,
+                    #         lid=lid,
+                    #         form=form,
+                    #         sense=sense,
+                    #         word=word,
+                    #     )
+
+
 #
 # main
 #
