@@ -68,15 +68,18 @@ def fetch():
       ?l a ontolex:LexicalEntry; dct:language wd:Q9027.
       VALUES ?excluded {
         # exclude affixes and interfix
-        wd:Q62155
-        wd:Q134830
-        wd:Q102047
+        wd:Q62155 # affix
+        wd:Q134830 # prefix
+        wd:Q102047 # suffix
+        wd:Q1153504 # interfix
       }
       MINUS {?l wdt:P31 ?excluded.}
 
       # We want only lexemes with both forms and at least one sense
       ?l ontolex:lexicalForm ?form.
-      ?l ontolex:lexicalSense [].
+      ?l ontolex:sense ?sense.
+      # Exclude lexemes without a linked QID from at least one sense
+      ?sense wdt:P5137 [].
       # This remove all lexemes with at least one example which is not
       # optimal
       MINUS {?l wdt:P5831 ?example.}
@@ -86,7 +89,7 @@ def fetch():
       SERVICE wikibase:label
       { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }
     }
-    limit 1
+    limit 10
     '''
     r = requests.get(url, params={'format': 'json', 'query': query})
     data = r.json()
