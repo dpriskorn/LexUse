@@ -3,7 +3,7 @@ import datetime
 import requests
 # from pprint import pprint
 import re
-# import LexData
+import LexData
 # import logging
 from wikibaseintegrator import wbi_core, wbi_login
 
@@ -17,8 +17,12 @@ import config
 # loop through the list
 #  search for the word in riksdagen api
 #  extract sentence
-#  present for approval
+#  present for sentence approval
 #    if approved
+#      if number of sense=1
+#        present sense for approval
+#      else
+#        present senses and ask user to choose 1
 #      add "demonstrates form"
 #      add "demonstrates sense"
 #      add a reference
@@ -26,6 +30,8 @@ import config
 
 # Settings
 language = "swedish"
+wd_prefix = "http://www.wikidata.org/entity/"
+debug = True
 # Logging for LexData
 # logging.basicConfig(level=logging.INFO)
 
@@ -35,6 +41,8 @@ language = "swedish"
 # Authenticate with WikibaseIntegrator
 global login_instance
 login_instance = wbi_login.Login(user=config.username, pwd=config.password)
+# LexData authentication
+login = LexData.WikidataSession(config.username, config.password)
 
 
 #
@@ -89,7 +97,8 @@ def fetch():
       SERVICE wikibase:label
       { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }
     }
-    limit 10
+    limit 30
+    offset 20
     '''
     r = requests.get(url, params={'format': 'json', 'query': query})
     data = r.json()
@@ -106,15 +115,15 @@ def fetch():
 
 def extract_data(result):
     lid = result["l"]["value"].replace(
-        "http://www.wikidata.org/entity/", ""
+        wd_prefix, ""
     )
-    form = result["form"]["value"].replace(
-        "http://www.wikidata.org/entity/", ""
+    form_id = result["form"]["value"].replace(
+        wd_prefix, ""
     )
     word = result["word"]["value"]
     return dict(
         lid=lid,
-        form=form,
+        form_id=form_id,
         word=word
     )
 
@@ -127,24 +136,31 @@ def lookup_summary(word):
            "&limit=2")
     r = requests.get(url)
     data = r.json()
-    return data["dokumentlista"]["dokument"]
+    # check if dokument is in the list
+    key_list = list(data["dokumentlista"].keys())
+    if "dokument" in key_list:
+        return data["dokumentlista"]["dokument"]
 
 
 def add_usage_example(
         document_id=None,
         sentence=None,
         lid=None,
-        form=None,
-        sense=None,
+        form_id=None,
+        sense_id=None,
         word=None,
 ):
     # Use WikibaseIntegrator aka wbi to upload the changes
     link_to_form = wbi_core.Form(
         prop_nr="P5830",
-        value=form,
+        value=form_id,
         is_qualifier=True
     )
-    # TODO add sense here
+    link_to_sense = wbi_core.Sense(
+        prop_nr="P6072",
+        value=sense_id,
+        is_qualifier=True
+    )
     reference = [
         wbi_core.ItemID(
             prop_nr="P248",  # Stated in Riksdagen open data portal
@@ -172,23 +188,24 @@ def add_usage_example(
         sentence,
         "P5831",
         language="sv",
-        qualifiers=[link_to_form],
+        qualifiers=[link_to_form, link_to_sense],
         references=[reference],
     )
     # print(claim)
-    print(claim.get_json_representation())
+    if debug:
+        print(claim.get_json_representation())
     item = wbi_core.ItemEngine(data=[claim], item_id=lid)
-    # print(item.get_json_representation())
+    if debug:
+        print(item.get_json_representation())
     result = item.write(
         login_instance,
         edit_summary="Added usage example with [[Wikidata:rikslex]]"
     )
-    print(result)
+    return result
 
 
 def find_and_clean_sentence(
         word=None,
-        id=None,
         summary=None
 ):
     cleaned_summary = summary.replace(
@@ -198,6 +215,7 @@ def find_and_clean_sentence(
     elipsis = "…"
     # replace "t.ex." temporarily to avoid regex problems
     cleaned_summary = cleaned_summary.replace("t.ex.", "xxx")
+    cleaned_summary = cleaned_summary.replace("m.m.", "yyy")
     # print(f"working on {cleaned_summary}")
     # from https://stackoverflow.com/questions/3549075/
     # regex-to-find-all-sentences-of-text
@@ -206,61 +224,150 @@ def find_and_clean_sentence(
     )
     # Choose first sentence that has the word
     for sentence in sentences:
-        if word in sentence:
+        exclude_this_sentence = False
+        excluded_words = ["Sammanfattning", "betänkande"]
+        for excluded_word in excluded_words:
+            result = sentence.find(excluded_word)
+            if result != -1:
+                if debug:
+                    sentence = (sentence
+                                .replace("\n", "")
+                                .replace("-", "")
+                                .replace(elipsis, ""))
+                    print(f"Found excluded word {excluded_word} " +
+                          f"in {sentence}. Skipping")
+                exclude_this_sentence = True
+                # Exclude by breaking out of the iteration
+                break
+        if word in sentence and exclude_this_sentence is False:
             # restore the t.ex.
             sentence = sentence.replace("xxx", "t.ex.")
+            sentence = sentence.replace("yyy", "m.m.")
             # Last cleaning
             sentence = (sentence
                         .replace("\n", "")
                         .replace("-", "")
                         .replace(elipsis, ""))
-            print(id)
-            # print(sentence)
             return sentence
 
 
+def fetch_senses(lid):
+    """Returns list of senses"""
+    return LexData.Lexeme(login, lid).senses
+
+
+def prompt_choose_sense(senses):
+    # from https://stackoverflow.com/questions/23294658/
+    # asking-the-user-for-input-until-they-give-a-valid-response
+    while True:
+        try:
+            options = ("Please choose the correct sense corresponding " +
+                       "to the meaning in the usage example")
+            number = 1
+            for sense in senses:
+                options += "\n{number}) {sense.glosse(lang='sv')}"
+                number += 1
+            options += "\nPlease input a number or 0 to cancel: "
+            choice = int(input(options))
+        except ValueError:
+            print("Sorry, I didn't understand that.")
+            # better try again... Return to the start of the loop
+            continue
+        else:
+            # choice was successfully parsed!
+            # we're ready to exit the loop.
+            break
+        if choice > 0 and choice < len(choice):
+            # arrays are 0-based so minus 1
+            return senses[choice - 1]
+        elif choice == 0:
+            return False
+        else:
+            print("This should never be reached.")
+
+
+def prompt_add_sentence(sentence=None, data=None):
+    word = data["word"]
+    if yes_no_question(
+            "Do you want to add this sentence: \n" +
+            f"{sentence}\nto the lexeme form {word}."
+    ):
+        sense_id = None
+        sense_gloss = None
+        # fetch senses of the current lexeme
+        lid = data["lid"]
+        senses = fetch_senses(lid)
+        number_of_senses = len(senses)
+        print(f"number_of_senses: {number_of_senses}")
+        if number_of_senses == 1:
+            print(senses[0].glosse(lang="sv"))
+            print(senses[0].id)
+            sense_id = senses[0].id
+            sense_gloss = senses[0].glosse(lang="sv")
+        else:
+            print(f"Found {number_of_senses} senses.")
+            sense = False
+            sense = prompt_choose_sense(senses)
+            if sense:
+                sense_id = sense.id
+                sense_gloss = sense.glosse(lang="sv")
+
+        if (sense_id is not None and sense_gloss is not None):
+            result = False
+            result = add_usage_example(
+                document_id=data["riksdagen_document_id"],
+                sentence=sentence,
+                lid=lid,
+                form_id=data["form_id"],
+                sense_id=sense_id,
+                word=word,
+            )
+            if result:
+                print("Successfully added usage example " +
+                      f"to {wd_prefix + lid}")
+        elif (sense_gloss is None):
+            print("Swedish gloss is missing for the sense" +
+                  f" {sense_id}, " +
+                  "please fix it here: " +
+                  f"{wd_prefix + sense_id}")
+        else:
+            print("This should not be reached.")
+            # pass
+
+
 def parse_lexeme_data(results):
+    if debug:
+        print("found these words:")
+        for result in results:
+            data = extract_data(result)
+            word = data["word"]
+            print(word)
     for result in results:
         data = extract_data(result)
-        lid = data["lid"]
-        form = data["form"]
+        form_id = data["form_id"]
         word = data["word"]
-        print(f"Working on the form: {word}")
+        print(f"Working on the form: {word} with id: {form_id}")
         results = lookup_summary(word)
-        for result in results:
-            summary = result["summary"]
-            riksdagen_document_id = result["id"]
-            # match only the exact word
-            if word in summary:
-                sentence = find_and_clean_sentence(
-                    word=word,
-                    id=riksdagen_document_id,
-                    summary=summary
-                )
-                if sentence:
-                    print("Saving to wikidata is disabled until linking with" +
-                          " a sense is implemented")
-                    # TODO add fetching the senses and presenting them to the
-                    # user for picking the right one if there is >1
-
-                    # if yes_no_question(
-                    #         "Do you want to add this sentence: \n" +
-                    #         f"{sentence}\nto the lexeme form {word}."
-                    # ):
-                    #     add_usage_example(
-                    #         document_id=riksdagen_document_id,
-                    #         sentence=sentence,
-                    #         lid=lid,
-                    #         form=form,
-                    #         sense=sense,
-                    #         word=word,
-                    #     )
+        if results is not None:
+            for result in results:
+                summary = result["summary"]
+                data["riksdagen_document_id"] = result["id"]
+                # match only the exact word
+                if word in summary:
+                    sentence = find_and_clean_sentence(
+                        word=word,
+                        summary=summary
+                    )
+                    if sentence:
+                        prompt_add_sentence(
+                            sentence=sentence,
+                            data=data
+                        )
 
 
 #
 # main
 #
-
 
 results = fetch()
 parse_lexeme_data(results)
