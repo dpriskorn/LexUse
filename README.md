@@ -1,5 +1,5 @@
-# rikslex
-Scripts related to Wikidata and the Riksdagen API. All scripts here are licensed under GPL-v3
+# lexeme-usage-examples
+Scripts used to find and add usage examples to Wikidata Lexemes. All scripts here are licensed under GPL-v3
 
-## examples-from-riksdagen.py
-Script used to semi-automatically import usage examples from the Riksdagen Open Data API to Wikidata Lexemes in swedish. 
+## swedish.py
+Script used to semi-automatically import usage examples from the Riksdagen Open Data API (400.000 documents) and RAÄ K-samsök (10 mio. items). 
