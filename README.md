@@ -1,4 +1,4 @@
-# lexeme-usage-examples
+# LexUse
 Scripts used to find and add usage examples to Wikidata Lexemes. All scripts here are licensed under GPL-v3
 
 ## swedish.py
