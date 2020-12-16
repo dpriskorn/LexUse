@@ -208,6 +208,8 @@ def find_and_clean_sentence(
         word=None,
         summary=None
 ):
+    # TODO check for duplicates or near duplicates and remove
+    # TODO sort by length and present only the first
     cleaned_summary = summary.replace(
         '<span class="traff-markering">', ""
     )
@@ -265,7 +267,7 @@ def prompt_choose_sense(senses):
                        "to the meaning in the usage example")
             number = 1
             for sense in senses:
-                options += "\n{number}) {sense.glosse(lang='sv')}"
+                options += f"\n{number}) {sense.glosse(lang='sv')}"
                 number += 1
             options += "\nPlease input a number or 0 to cancel: "
             choice = int(input(options))
@@ -280,59 +282,98 @@ def prompt_choose_sense(senses):
         if choice > 0 and choice < len(choice):
             # arrays are 0-based so minus 1
             return senses[choice - 1]
-        elif choice == 0:
+        else:
+            print("Cancelled adding this sentence.")
             return False
-        else:
-            print("This should never be reached.")
 
 
-def prompt_add_sentence(sentence=None, data=None):
+def add_to_watchlist(lid):
+    # Get session from WBI
+    session = login_instance.get_session()
+    # adapted from https://www.mediawiki.org/wiki/API:Watch
+    url = "https://www.wikidata.org/w/api.php"
+    params_token = {
+        "action": "query",
+        "meta": "tokens",
+        "type": "watch",
+        "format": "json"
+    }
+
+    result = session.get(url=url, params=params_token)
+    data = result.json()
+
+    csrf_token = data["query"]["tokens"]["watchtoken"]
+
+    params_watch = {
+        "action": "watch",
+        "titles": "Lexeme:" + lid,
+        "format": "json",
+        "formatversion": "2",
+        "token": csrf_token,
+    }
+
+    result = session.post(
+        url, data=params_watch
+    )
+    if debug:
+        print(result.text)
+    print(f"Added {lid} to your watchlist")
+
+
+def add_sentence(sentence=None, data=None):
     word = data["word"]
-    if yes_no_question(
-            "Do you want to add this sentence: \n" +
-            f"{sentence}\nto the lexeme form {word}."
-    ):
-        sense_id = None
-        sense_gloss = None
-        # fetch senses of the current lexeme
-        lid = data["lid"]
-        senses = fetch_senses(lid)
-        number_of_senses = len(senses)
-        print(f"number_of_senses: {number_of_senses}")
-        if number_of_senses == 1:
-            print(senses[0].glosse(lang="sv"))
+    sense_id = None
+    sense_gloss = None
+    # fetch senses of the current lexeme
+    lid = data["lid"]
+    senses = fetch_senses(lid)
+    number_of_senses = len(senses)
+    print(f"number_of_senses: {number_of_senses}")
+    if number_of_senses == 1:
+        gloss = senses[0].glosse(lang="sv")
+        if debug:
             print(senses[0].id)
+        if yes_no_question("The lexeme has only 1 sense. " +
+                        f"Does this example fit the gloss: {gloss}"):
             sense_id = senses[0].id
-            sense_gloss = senses[0].glosse(lang="sv")
+            sense_gloss = gloss
         else:
-            print(f"Found {number_of_senses} senses.")
-            sense = False
-            sense = prompt_choose_sense(senses)
-            if sense:
-                sense_id = sense.id
-                sense_gloss = sense.glosse(lang="sv")
+            print("Cancelled adding sentence as it does not match the " +
+                  "only sense currently present. Use MachtSinn to add " +
+                  "more senses to lexemes by matching on QID concepts " +
+                  "with similar labels and descriptions in the lexeme " +
+                  "language.")
+    else:
+        print(f"Found {number_of_senses} senses.")
+        sense = False
+        # TODO check that all senses has a swedish gloss
+        sense = prompt_choose_sense(senses)
+        if sense:
+            sense_id = sense.id
+            sense_gloss = sense.glosse(lang="sv")
 
-        if (sense_id is not None and sense_gloss is not None):
-            result = False
-            result = add_usage_example(
-                document_id=data["riksdagen_document_id"],
-                sentence=sentence,
-                lid=lid,
-                form_id=data["form_id"],
-                sense_id=sense_id,
-                word=word,
-            )
-            if result:
-                print("Successfully added usage example " +
-                      f"to {wd_prefix + lid}")
-        elif (sense_gloss is None):
-            print("Swedish gloss is missing for the sense" +
-                  f" {sense_id}, " +
-                  "please fix it here: " +
-                  f"{wd_prefix + sense_id}")
-        else:
-            print("This should not be reached.")
-            # pass
+    if (sense_id is not None and sense_gloss is not None):
+        result = False
+        result = add_usage_example(
+            document_id=data["riksdagen_document_id"],
+            sentence=sentence,
+            lid=lid,
+            form_id=data["form_id"],
+            sense_id=sense_id,
+            word=word,
+        )
+        if result:
+            print("Successfully added usage example " +
+                  f"to {wd_prefix + lid}")
+            add_to_watchlist(lid)
+    elif (sense_gloss is None):
+        print("Swedish gloss is missing for the sense" +
+              f" {sense_id}, " +
+              "please fix it manually here: " +
+              f"{wd_prefix + sense_id}")
+    else:
+        print("This should not be reached.")
+        # pass
 
 
 def parse_lexeme_data(results):
@@ -346,8 +387,13 @@ def parse_lexeme_data(results):
         data = extract_data(result)
         form_id = data["form_id"]
         word = data["word"]
-        print(f"Working on the form: {word} with id: {form_id}")
+        print(f"Trying to find examples for the form: {word} with id: {form_id}")
         results = lookup_summary(word)
+        # TODO rework this to first find all the sentences and then sort them
+        # according to length and pick the shortest first
+        #
+        # TODO look for more examples from riksdagen if none in the first set of
+        # results fit our purpose
         if results is not None:
             for result in results:
                 summary = result["summary"]
@@ -359,15 +405,39 @@ def parse_lexeme_data(results):
                         summary=summary
                     )
                     if sentence:
-                        prompt_add_sentence(
-                            sentence=sentence,
-                            data=data
-                        )
+                        if yes_no_question(
+                                "Do you want to add this sentence: \n" +
+                                f"{sentence}\nto the lexeme form {word}."
+                        ):
+                            add_sentence(
+                                sentence=sentence,
+                                data=data
+                            )
+                            # Break out of the loop because one example was
+                            # already choosen for this form
+                            break
+
+
+def introduction():
+    if yes_no_question("This script enables you to " +
+                       "semi-automatically add usage examples to " +
+                       "lexemes. \nPlease pay attention to the lexical " +
+                       "category of the lexeme. \nAlso try " +
+                       "adding only short and concise " +
+                       "examples to avoid bloat and maximise " +
+                       "usefullness. \nThis script adds edited " +
+                       "lexemes (indefinitely) to your watchlist. " +
+                       "Continue?"):
+        return True
+    else:
+        return False
 
 
 #
 # main
 #
 
-results = fetch()
-parse_lexeme_data(results)
+begin = introduction()
+if begin:
+    results = fetch()
+    parse_lexeme_data(results)
