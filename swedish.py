@@ -6,7 +6,7 @@ import requests
 import re
 import time
 
-import LexData
+# import LexData
 # import logging
 from wikibaseintegrator import wbi_core, wbi_login
 
@@ -46,15 +46,13 @@ language_code = "sv"
 wd_prefix = "http://www.wikidata.org/entity/"
 min_word_count = 5
 max_word_count = 20
-debug = True
+debug = False
 debug_duplicates = False
 debug_excludes = False
 debug_json = False
 debug_riksdagen = False
 debug_sentences = False
 debug_summaries = False
-# Logging for LexData
-# logging.basicConfig(level=logging.INFO)
 
 # Global variable
 # FIXME only log in once, pass the session from WBI to LexData
@@ -65,7 +63,6 @@ login = None
 #
 # Functions
 #
-
 
 def yes_no_question(message: str):
     # https://www.quora.com/
@@ -81,11 +78,50 @@ def yes_no_question(message: str):
                 return answer[0].lower() == 'y'
 
 
-def fetch_lexeme_forms():
+def sparql_query(query):
     # from https://stackoverflow.com/questions/55961615/
     # how-to-integrate-wikidata-query-in-python
     url = 'https://query.wikidata.org/sparql'
-    query = ('''
+    r = requests.get(url, params={'format': 'json', 'query': query})
+    data = r.json()
+    # pprint(data)
+    results = data["results"]["bindings"]
+    # pprint(results)
+    if len(results) == 0:
+        print(f"No {language} lexemes containing both a sense, forms with " +
+              "grammatical features and missing a usage example was found")
+        exit(0)
+    else:
+        return results
+
+
+def fetch_senses(lid):
+    """Returns dictionary with numbers as keys and a dictionary as value with
+    sense id and gloss"""
+    result = (sparql_query(f'''
+    SELECT
+    ?sense ?gloss
+    WHERE {{
+      VALUES ?l {{wd:{lid}}}.
+      ?l ontolex:sense ?sense.
+      ?sense skos:definition ?gloss.
+      # Exclude lexemes without a linked QID from at least one sense
+      ?sense wdt:P5137 [].
+    }}'''))
+    senses = {}
+    number = 1
+    for row in result:
+        senses[number] = {
+            "sense_id": row["sense"]["value"].replace(wd_prefix, ""),
+            "gloss": row["gloss"]["value"]
+        }
+        number += 1
+    return senses
+# print(fetch_senses("L39751"))
+
+
+def fetch_lexeme_forms():
+    return sparql_query('''
     SELECT DISTINCT
     #(COUNT(?l) AS ?count)
     ?l ?form ?word ?catLabel
@@ -120,17 +156,6 @@ def fetch_lexeme_forms():
              f'''limit {sparql_results_size}
              offset 50
              ''')
-    r = requests.get(url, params={'format': 'json', 'query': query})
-    data = r.json()
-    # pprint(data)
-    results = data["results"]["bindings"]
-    # pprint(results)
-    if len(results) == 0:
-        print(f"No {language} lexemes containing both a sense, forms with " +
-              "grammatical features and missing a usage example was found")
-        exit(0)
-    else:
-        return results
 
 
 def extract_data(result):
@@ -198,7 +223,7 @@ def add_usage_example(
         word=None,
         publication_date=None,
 ):
-    # Use WikibaseIntegrator aka wbi to upload the changes
+    # Use WikibaseIntegrator aka wbi to upload the changes in one edit
     if publication_date is not None:
         publication_date = datetime.fromisoformat(publication_date)
     else:
@@ -289,39 +314,15 @@ def find_usage_examples_from_summary(
     cleaned_summary = cleaned_summary.replace("m.m", "yyy")
     cleaned_summary = cleaned_summary.replace("dvs.", "qqq")
     cleaned_summary = cleaned_summary.replace("bl.", "zzz")
-    # print(f"working on {cleaned_summary}")
+    # TODO add "ang."
+
     # from https://stackoverflow.com/questions/3549075/
     # regex-to-find-all-sentences-of-text
     sentences = re.findall(
         "[A-Z].*?[\.!?]", cleaned_summary, re.MULTILINE | re.DOTALL
     )
-    # Remove duplicates naively
+    # Remove duplicates naively using sets
     sentences_without_duplicates = list(set(sentences))
-    # # add to a dictionary
-    # sentence_dict = dict.fromkeys(sentences, 1)
-    # for sentence in sentences:
-    #     index = sentence.index(sentence)
-    #     if debug_duplicates:
-    #         print(f"index first sentence {index}")
-    #     # find similarity against all sentences in the list
-    #     for other_sentence in sentences:
-    #         # avoid matching to itself
-    #         other_index = sentences.index(other_sentence)
-    #         if debug_duplicates:
-    #             print(f"index other sentence {index}")
-    #         if index != other_index:
-    #             ratio = jellyfish.levenshtein_distance(
-    #                 sentence, other_sentence
-    #             )
-    #             if debug_duplicates:
-    #                 print(f"\nratio between \n{sentence} " +
-    #                       f"and \n{other_sentence} \nis: {ratio}")
-    #             if ratio < 20:
-    #                 if debug_duplicates:
-    #                     print(f"ajabaja removing {other_sentence}")
-    #                 # remove other_index from dictionary or spew an error
-    #                 sentence_dict.pop(other_sentence)
-    # sentences_without_duplicates = sentence_dict.keys()
     if debug_duplicates:
         print("Sentences after duplicate removal " +
               f"{sentences_without_duplicates}")
@@ -345,7 +346,6 @@ def find_usage_examples_from_summary(
                 " EU ",
                 "RIKSDAGEN",
             ]
-            # count_excluded_sentences = 0
             for excluded_word in excluded_words:
                 result = sentence.upper().find(excluded_word)
                 if result != -1:
@@ -377,30 +377,19 @@ def find_usage_examples_from_summary(
     return suitable_sentences
 
 
-def fetch_senses(lid):
-    """Returns list of senses"""
-    senses = LexData.Lexeme(login, lid).senses
-    # Remove senses without P5137
-    list = []
-    for sense in senses:
-        if "P5137" in sense.claims.keys():
-            if debug:
-                print(f"Appending {sense.id}")
-            list.append(sense)
-    return list
-
-
 def prompt_choose_sense(senses):
+    """Returns a dictionary with sense_id -> sense_id
+    and gloss -> gloss or False"""
     # from https://stackoverflow.com/questions/23294658/
     # asking-the-user-for-input-until-they-give-a-valid-response
-    # We exit the loop by returning
     while True:
         try:
             options = ("Please choose the correct sense corresponding " +
                        "to the meaning in the usage example")
             number = 1
+            # Put each key -> value into a new nested dictionary
             for sense in senses:
-                options += f"\n{number}) {sense.glosse(lang=language_code)}"
+                options += f"\n{number}) {sense[number]['gloss']}"
                 number += 1
             options += "\nPlease input a number or 0 to cancel: "
             choice = int(input(options))
@@ -411,11 +400,10 @@ def prompt_choose_sense(senses):
         else:
             print(f"len: {len(senses)}")
             if choice > 0 and choice <= len(senses):
-                # arrays are 0-based so minus 1
-                sense = senses[choice - 1]
-                if debug_json:
-                    print(f"returning: {sense}")
-                return sense
+                return {
+                    "sense_id": senses[choice]["sense_id"],
+                    "gloss": senses[choice]["gloss"]
+                }
             else:
                 print("Cancelled adding this sentence.")
                 return False
@@ -461,18 +449,19 @@ def prompt_sense_approval(sentence=None, data=None):
     sense_gloss = None
     # fetch senses of the current lexeme
     lid = data["lid"]
+    # This returns a tuple if one sense or a dictionary if multiple senses
     senses = fetch_senses(lid)
     number_of_senses = len(senses)
     aborted = False
     if debug:
         print(f"number_of_senses: {number_of_senses}")
     if number_of_senses == 1:
-        gloss = senses[0].glosse(lang=language_code)
+        gloss = senses[1]["gloss"]
         if yes_no_question("Found only one sense. " +
                            "Does this example fit the following " +
                            f"gloss? \n'{gloss}'"):
             return {
-                "sense_id": senses[0].id,
+                "sense_id": senses[1]["sense_id"],
                 "sense_gloss": gloss
             }
         else:
@@ -493,8 +482,8 @@ def prompt_sense_approval(sentence=None, data=None):
             if debug:
                 print("debug: setting sense")
             return {
-                "sense_id": sense.id,
-                "sense_gloss": sense.glosse(lang=language_code)
+                "sense_id": sense["sense_id"],
+                "sense_gloss": sense["gloss"]
             }
         else:
             aborted = True
@@ -562,7 +551,7 @@ def extract_summaries_from_records(records, data):
         count_summary += 1
     if debug_summaries:
         print(f"summaries: {summaries}")
-    print(f"Processed {count_summary} and found " +
+    print(f"Processed {count_summary} records and found " +
           f"{count_exact_hits} exact hits for the form '{word}' " +
           f"among {count_inexact_hits} where the lexeme was present.")
     return summaries
@@ -733,8 +722,6 @@ if begin:
     # Authenticate with WikibaseIntegrator
     print("Logging in with WikibaseIntegrator")
     login_instance = wbi_login.Login(user=config.username, pwd=config.password)
-    print("Logging in with LexData")
-    login = LexData.WikidataSession(config.username, config.password)
     print("Fetching lexeme forms to work on")
     results = fetch_lexeme_forms()
     parse_lexeme_data(results)
