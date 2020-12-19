@@ -4,13 +4,20 @@ import random
 import requests
 # from pprint import pprint
 import re
+import time
 
 # Needed for matching similar strings
-import jellyfish
+# import jellyfish
 import LexData
 # import logging
 from wikibaseintegrator import wbi_core, wbi_login
 
+# Create a file named config.py yourself with the following content:
+# username = "username"
+# password= "password"
+#
+# Please create a bot password for running the script for
+# safety reasons here: https://www.wikidata.org/wiki/Special:BotPasswords
 import config
 
 # This script enables finding example sentences via the Riksdagen API where
@@ -21,7 +28,8 @@ import config
 # loop through the list
 #  search for the word in riksdagen api
 #  extract sentence
-#  present for sentence approval
+#  clean sentence
+#  present sentence for approval
 #    if approved
 #      if number of sense=1
 #        present sense for approval
@@ -33,13 +41,18 @@ import config
 #      upload to WD
 
 # Settings
-results_size = 50
+sparql_results_size = 500
+riksdagen_results_size = 240
 language = "swedish"
+language_code = "sv"
 wd_prefix = "http://www.wikidata.org/entity/"
+min_word_count = 5
+max_word_count = 20
 debug = True
 debug_duplicates = True
 debug_excludes = True
 debug_json = True
+debug_sentences = True
 # Logging for LexData
 # logging.basicConfig(level=logging.INFO)
 
@@ -68,7 +81,7 @@ def yes_no_question(message: str):
                 return answer[0].lower() == 'y'
 
 
-def fetch():
+def fetch_lexeme_forms():
     # from https://stackoverflow.com/questions/55961615/
     # how-to-integrate-wikidata-query-in-python
     url = 'https://query.wikidata.org/sparql'
@@ -104,7 +117,7 @@ def fetch():
       SERVICE wikibase:label
       { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }
     }''' +
-             f'''limit {results_size}
+             f'''limit {sparql_results_size}
              offset 50
              ''')
     r = requests.get(url, params={'format': 'json', 'query': query})
@@ -129,31 +142,50 @@ def extract_data(result):
     )
     word = result["word"]["value"]
     word_spaces = " " + word + " "
+    word_angle_parens = ">" + word + "<"
     category = result["catLabel"]["value"]
     return dict(
         lid=lid,
         form_id=form_id,
         word=word,
         word_spaces=word_spaces,
+        word_angle_parens=word_angle_parens,
         category=category
     )
 
 
 def fetch_from_riksdagen(word):
-    # Look up a sentence from Riksdagen
-    url = (f"http://data.riksdagen.se/dokumentlista/?sok={word}" +
-           "&sort=rel" +
-           "&sortorder=desc&rapport=&utformat=json&a=s#soktraff" +
-           "&limit=2")
-    r = requests.get(url)
-    data = r.json()
-    # check if dokument is in the list
-    key_list = list(data["dokumentlista"].keys())
-    if "dokument" in key_list:
-        documents = data["dokumentlista"]["dokument"]
+    # Look up records from the Riksdagen API
+    records = []
+    for i in range(1, int(riksdagen_results_size / 20) + 1):
+        if i > 1:
+            # break if i is more than 1 and the results are less than 20
+            # because that means that there are no more results in page 2-5
+            if len(records) < 20:
+                break
+        url = (f"http://data.riksdagen.se/dokumentlista/?sok={word}" +
+               "&sort=rel" +
+               "&sortorder=desc&utformat=json&a=s" +
+               f"&p={i}")
         if debug:
-            print(f"Got {len(documents)} documents from the Riksdagen API")
-        return documents
+            print(url)
+        r = requests.get(url)
+        data = r.json()
+        # check if dokument is in the list
+        key_list = list(data["dokumentlista"].keys())
+        if "dokument" in key_list:
+            for item in data["dokumentlista"]["dokument"]:
+                records.append(item)
+        else:
+            # We break if the API does not return any more results
+            if debug:
+                print("API did not return any (more) results")
+            break
+    if debug:
+        print(f"Got {len(records)} records from the Riksdagen API")
+    if debug_json:
+        print(records)
+    return records
 
 
 def add_usage_example(
@@ -215,10 +247,17 @@ def add_usage_example(
         login_instance,
         edit_summary="Added usage example with [[Wikidata:LexUse]]"
     )
+    if debug_json:
+        print(f"Result from WBI: {result}")
     return result
 
 
-def parse_summary(
+def count_words(string):
+    # from https://www.pythonpool.com/python-count-words-in-string/
+    return(len(string.strip().split(" ")))
+
+
+def find_usage_examples_from_summary(
         word_spaces=None,
         summary=None
 ):
@@ -228,86 +267,100 @@ def parse_summary(
         '<span class="traff-markering">', ""
     )
     cleaned_summary = cleaned_summary.replace('</span>', "")
-    elipsis = "…"
+    ellipsis = "…"
     # replace "t.ex." temporarily to avoid regex problems
     cleaned_summary = cleaned_summary.replace("t.ex.", "xxx")
     # Leave the last dot of m.m. to retain the full stop it probably
     # means
     cleaned_summary = cleaned_summary.replace("m.m", "yyy")
     cleaned_summary = cleaned_summary.replace("dvs.", "qqq")
-    cleaned_summary = cleaned_summary.replace("bl.a.", "zzz")
+    cleaned_summary = cleaned_summary.replace("bl.", "zzz")
     # print(f"working on {cleaned_summary}")
     # from https://stackoverflow.com/questions/3549075/
     # regex-to-find-all-sentences-of-text
     sentences = re.findall(
         "[A-Z].*?[\.!?]", cleaned_summary, re.MULTILINE | re.DOTALL
     )
-    # Remove duplicates
-    # add to a dictionary
-    sentence_dict = dict.fromkeys(sentences, 1)
-    for sentence in sentences:
-        index = sentence.index(sentence)
-        # remove the longest of the two
-        # find similarity against all sentences in the list
-        for other_sentence in sentences:
-            # avoid matching to itself
-            other_index = sentences.index(other_sentence)
-            if index != other_index:
-                ratio = jellyfish.levenshtein_distance(sentence, other_sentence)
-                if debug_duplicates:
-                    print(f"\nratio between \n{sentence} and \n{other_sentence} \nis: {ratio}")
-                if ratio < 20:
-                    if debug_duplicates:
-                        print("ajabaja removing {other_sentence}")
-                    # remove other_index from dictionary or spew an error
-                    sentence_dict.pop(other_sentence)
-    sentences_without_duplicates = sentence_dict.keys()
+    # Remove duplicates naively
+    sentences_without_duplicates = list(set(sentences))
+    # # add to a dictionary
+    # sentence_dict = dict.fromkeys(sentences, 1)
+    # for sentence in sentences:
+    #     index = sentence.index(sentence)
+    #     if debug_duplicates:
+    #         print(f"index first sentence {index}")
+    #     # find similarity against all sentences in the list
+    #     for other_sentence in sentences:
+    #         # avoid matching to itself
+    #         other_index = sentences.index(other_sentence)
+    #         if debug_duplicates:
+    #             print(f"index other sentence {index}")
+    #         if index != other_index:
+    #             ratio = jellyfish.levenshtein_distance(
+    #                 sentence, other_sentence
+    #             )
+    #             if debug_duplicates:
+    #                 print(f"\nratio between \n{sentence} " +
+    #                       f"and \n{other_sentence} \nis: {ratio}")
+    #             if ratio < 20:
+    #                 if debug_duplicates:
+    #                     print(f"ajabaja removing {other_sentence}")
+    #                 # remove other_index from dictionary or spew an error
+    #                 sentence_dict.pop(other_sentence)
+    # sentences_without_duplicates = sentence_dict.keys()
     if debug_duplicates:
-        print(f"Sentences after duplicate removal {sentences_without_duplicates}")
-    # TODO choose the shortest instead
-    sorted_sentences = sorted(sentences, key=len)
-    for sentence in sorted_sentences:
+        print("Sentences after duplicate removal " +
+              f"{sentences_without_duplicates}")
+    suitable_sentences = []
+    for sentence in sentences_without_duplicates:
         exclude_this_sentence = False
-        excluded_words = [
-            "SAMMANFATTNING",
-            "BETÄNKANDE",
-            "UTSKOTT",
-            "MOTION",
-            " EG ",
-            " EU ",
-            "RIKSDAGEN",
-        ]
-        # count_excluded_sentences = 0
-        for excluded_word in excluded_words:
-            result = sentence.upper().find(excluded_word)
-            if result != -1:
-                if debug_excludes:
-                    sentence = (sentence
-                                .replace("\n", "")
-                                .replace("-", "")
-                                .replace(elipsis, ""))
-                    print(f"Found excluded word {excluded_word} " +
-                          f"in {sentence}. Skipping")
-                exclude_this_sentence = True
-                # count_excluded_sentences += 1
-                # Exclude by breaking out of the iteration
-                break
+        # Exclude based on lenght of the sentence
+        word_count = count_words(sentence)
+        if word_count > max_word_count or word_count < min_word_count:
+            exclude_this_sentence = True
+            # Exclude by breaking out of the iteration early
+            break
+        else:
+            # Exclude based on weird words
+            excluded_words = [
+                "SAMMANFATTNING",
+                "BETÄNKANDE",
+                "UTSKOTT",
+                "MOTION",
+                " EG ",
+                " EU ",
+                "RIKSDAGEN",
+            ]
+            # count_excluded_sentences = 0
+            for excluded_word in excluded_words:
+                result = sentence.upper().find(excluded_word)
+                if result != -1:
+                    if debug_excludes:
+                        sentence = (sentence
+                                    .replace("\n", "")
+                                    .replace("-", "")
+                                    .replace(ellipsis, ""))
+                        print(f"Found excluded word {excluded_word} " +
+                              f"in {sentence}. Skipping")
+                    exclude_this_sentence = True
+                    break
         # Add space to match better
         if word_spaces in sentence and exclude_this_sentence is False:
             # restore the t.ex.
             sentence = sentence.replace("xxx", "t.ex.")
             sentence = sentence.replace("yyy", "m.m")
             sentence = sentence.replace("qqq", "dvs.")
-            sentence = sentence.replace("zzz", "bl.a.")
+            sentence = sentence.replace("zzz", "bl.")
             # Last cleaning
             sentence = (sentence
                         .replace("\n", "")
                         # This removes "- " because the data is hyphenated
                         # sometimes
                         .replace("- ", "")
-                        .replace(elipsis, "")
+                        .replace(ellipsis, "")
                         .replace("  ", " "))
-            return sentence
+            suitable_sentences.append(sentence)
+    return suitable_sentences
 
 
 def fetch_senses(lid):
@@ -333,7 +386,7 @@ def prompt_choose_sense(senses):
                        "to the meaning in the usage example")
             number = 1
             for sense in senses:
-                options += f"\n{number}) {sense.glosse(lang='sv')}"
+                options += f"\n{number}) {sense.glosse(lang=language_code)}"
                 number += 1
             options += "\nPlease input a number or 0 to cancel: "
             choice = int(input(options))
@@ -343,7 +396,7 @@ def prompt_choose_sense(senses):
             continue
         else:
             print(f"len: {len(senses)}")
-            if choice > 0 and choice < len(senses):
+            if choice > 0 and choice <= len(senses):
                 # arrays are 0-based so minus 1
                 sense = senses[choice - 1]
                 if debug_json:
@@ -387,8 +440,9 @@ def add_to_watchlist(lid):
     print(f"Added {lid} to your watchlist")
 
 
-def add_sentence(sentence=None, data=None):
-    word = data["word"]
+def prompt_sense_approval(sentence=None, data=None):
+    """Prompts for validating that we have a sense matching the use example
+    return dictionary with sense_id and sense_gloss if approved else False"""
     sense_id = None
     sense_gloss = None
     # fetch senses of the current lexeme
@@ -399,101 +453,96 @@ def add_sentence(sentence=None, data=None):
     if debug:
         print(f"number_of_senses: {number_of_senses}")
     if number_of_senses == 1:
-        gloss = senses[0].glosse(lang="sv")
-        if yes_no_question("The lexeme has only 1 sense. " +
-                           f"Does this example fit the gloss: {gloss}"):
-            sense_id = senses[0].id
-            sense_gloss = gloss
+        gloss = senses[0].glosse(lang=language_code)
+        if yes_no_question("Found only one sense. " +
+                           "Does this example fit the following " +
+                           f"gloss? \n'{gloss}'"):
+            return {
+                "sense_id": senses[0].id,
+                "sense_gloss": gloss
+            }
         else:
             print("Cancelled adding sentence as it does not match the " +
                   "only sense currently present. Use MachtSinn to add " +
                   "more senses to lexemes by matching on QID concepts " +
                   "with similar labels and descriptions in the lexeme " +
                   "language.")
+            time.sleep(5)
+            return False
     else:
         print(f"Found {number_of_senses} senses.")
         sense = False
-        # TODO check that all senses has a swedish gloss
+        # TODO check that all senses has a gloss matching the language of the
+        # example
         sense = prompt_choose_sense(senses)
         if sense is not False:
             if debug:
                 print("debug: setting sense")
-            sense_id = sense.id
-            sense_gloss = sense.glosse(lang="sv")
+            return {
+                "sense_id": sense.id,
+                "sense_gloss": sense.glosse(lang=language_code)
+            }
         else:
             aborted = True
     if not aborted:
-        if (sense_id is not None and sense_gloss is not None):
-            result = False
-            result = add_usage_example(
-                document_id=data["riksdagen_document_id"],
-                sentence=sentence,
-                lid=lid,
-                form_id=data["form_id"],
-                sense_id=sense_id,
-                word=word,
-            )
-            if result:
-                print("Successfully added usage example " +
-                      f"to {wd_prefix + lid}")
-                add_to_watchlist(lid)
-        elif (sense_id is not None and sense_gloss is None):
+        if (sense_id is not None and sense_gloss is None):
             print("Swedish gloss is missing for the sense" +
                   f" {sense_id}, " +
                   "please fix it manually here: " +
                   f"{wd_prefix + lid}")
+            time.sleep(5)
+            return False
         else:
             print("Sense_id is None. This should not be reached.")
-            # pass
+    else:
+        # Aborted
+        return False
 
 
-def loop_through_records(records, data):
+def extract_summaries_from_records(records, data):
     # TODO rework this to first find all the sentences and then sort them
     # according to length and pick the shortest first
     #
     # TODO look for more examples from riksdagen if none in the first set of
     # results fit our purpose
     word_spaces = data["word_spaces"]
+    word_angle_parens = data["word_angle_parens"]
     word = data["word"]
-    count = 1
+    count_summary = 1
+    count_inexact_hits = 1
+    count_exact_hits = 1
+    summaries = {}
     for record in records:
         if debug:
-            print(f"Working of record number {count}")
+            print(f"Working of record number {count_summary}")
         summary = record["summary"]
         # This is needed by add_sentence()
         data["riksdagen_document_id"] = record["id"]
         # match only the exact word
+        added = False
         if word in summary:
-            sentence = parse_summary(
-                word_spaces=word_spaces,
-                summary=summary
-            )
-            if sentence:
-                if yes_no_question(
-                        "Do you want to add this sentence: \n" +
-                        f"{sentence}"
-                ):
-                    add_sentence(
-                        sentence=sentence,
-                        data=data
-                    )
-                    # Break out of the loop because one example was
-                    # already choosen for this form
-                    count += 1
-                    break
+            count_inexact_hits += 1
+            if word_spaces in summary or word_angle_parens in summary:
+                count_exact_hits += 1
+                # add to dictionary
+                summaries[summary] = data
+                added = True
             else:
                 if debug:
-                    print("No sentence found.")
-                count += 1
-                break
+                    print("No exact hit in summary. Skipping.")
         else:
-            if debug:
-                print(f"Word {data['word']} " +
-                      f"not found in: \n{summary}")
-        count += 1
+            if debug and added is False:
+                print(f"'{word}' not found as part of a word or a " +
+                      "word in the summary. Skipping")
+        count_summary += 1
+    if debug:
+        print(summaries)
+    print(f"Got {count_exact_hits} exact hits for the form '{word}' " +
+          f"among {count_inexact_hits} where the lexeme was present.")
+    return summaries
 
 
-def search_for_sentences(result):
+def get_sentences_from_apis(result):
     data = extract_data(result)
     form_id = data["form_id"]
     word = data["word"]
@@ -504,7 +553,63 @@ def search_for_sentences(result):
     if records is not None:
         if debug:
             print("Looping through records from Riksdagen")
-        loop_through_records(records, data)
+        summaries = extract_summaries_from_records(records, data)
+        unsorted_sentences = {}
+        # Iterate through the dictionary
+        for summary in summaries:
+            data = summaries[summary]
+            suitable_sentences = find_usage_examples_from_summary(
+                word_spaces=data["word_spaces"],
+                summary=summary
+            )
+            if len(suitable_sentences) > 0:
+                for sentence in suitable_sentences:
+                    # Make sure the riksdagen_document_id follows
+                    unsorted_sentences[sentence] = data
+        if debug_sentences:
+            print(f"unsorted_sentences: {unsorted_sentences}")
+        print(f"Found {len(unsorted_sentences)} suitable sentences " +
+              "from the Riksdagen API")
+        return unsorted_sentences
+    # TODO K-samsök
+    # TODO Europarl corpus
+
+
+def present_sentence(sentence, data):
+    word_count = count_words(sentence)
+    if yes_no_question(
+            f"Found the following sentence with {word_count} " +
+            "words. Is it suitable as a usage example " +
+            f"for the form '{data['word']}'? \n" +
+            f"'{sentence}'"
+    ):
+        selected_sense = prompt_sense_approval(
+            sentence=sentence,
+            data=data
+        )
+        if selected_sense is not False:
+            lid = data["lid"]
+            sense_id = selected_sense["sense_id"]
+            sense_gloss = selected_sense["sense_gloss"]
+            if (sense_id is not None and sense_gloss is not None):
+                result = False
+                result = add_usage_example(
+                    document_id=data["riksdagen_document_id"],
+                    sentence=sentence,
+                    lid=lid,
+                    form_id=data["form_id"],
+                    sense_id=sense_id,
+                    word=data["word"],
+                )
+                if result:
+                    print("Successfully added usage example " +
+                          f"to {wd_prefix + lid}")
+                    add_to_watchlist(lid)
+                    return True
+                else:
+                    return False
+            else:
+                return False
 
 
 def parse_lexeme_data(results):
@@ -517,16 +622,39 @@ def parse_lexeme_data(results):
             print(word)
     # Go through the results at random
     # from http://stackoverflow.com/questions/306400/ddg#306417
-    already_done = []
+    earlier_choices = []
     while (True):
-        if len(already_done) == results_size:
+        if len(earlier_choices) == sparql_results_size:
             # We have gone checked all results now
             # TODO offer to fetch more
             print("No more results. Run the script again to continue")
             exit(0)
         else:
             result = random.choice(results)
-            search_for_sentences(result)
+            data = extract_data(result)
+            # Prevent running more than once for each result
+            if result not in earlier_choices:
+                earlier_choices.append(result)
+                # This dict holds the sentence as key and riksdagen_document_id
+                # as value
+                sentences_and_data = get_sentences_from_apis(result)
+                # Sort so that the shortest sentence is first
+                sorted_sentences = sorted(sentences_and_data, key=len)
+                if sentences_and_data is not None:
+                    example_was_added = False
+                    count = 1
+                    for sentence in sorted_sentences:
+                        if debug:
+                            print("Presenting sentence " +
+                                  f"{count}/{len(sentences_and_data)}")
+                        example_was_added = present_sentence(
+                            sentence, sentences_and_data[sentence]
+                        )
+                        count += 1
+                        # Break out of the for loop because one example was
+                        # already choosen for this result
+                        if example_was_added:
+                            break
 
 
 def introduction():
@@ -559,5 +687,5 @@ if begin:
     print("Logging in with LexData")
     login = LexData.WikidataSession(config.username, config.password)
     print("Fetching lexeme forms to work on")
-    results = fetch()
+    results = fetch_lexeme_forms()
     parse_lexeme_data(results)
