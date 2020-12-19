@@ -6,8 +6,6 @@ import requests
 import re
 import time
 
-# Needed for matching similar strings
-# import jellyfish
 import LexData
 # import logging
 from wikibaseintegrator import wbi_core, wbi_login
@@ -42,17 +40,18 @@ import config
 
 # Settings
 sparql_results_size = 500
-riksdagen_results_size = 240
+riksdagen_results_size = 160  # keep to multiples of 20
 language = "swedish"
 language_code = "sv"
 wd_prefix = "http://www.wikidata.org/entity/"
 min_word_count = 5
 max_word_count = 20
 debug = True
-debug_duplicates = True
-debug_excludes = True
-debug_json = True
-debug_sentences = True
+debug_duplicates = False
+debug_excludes = False
+debug_json = False
+debug_sentences = False
+debug_summaries = False
 # Logging for LexData
 # logging.basicConfig(level=logging.INFO)
 
@@ -508,16 +507,21 @@ def extract_summaries_from_records(records, data):
     word_spaces = data["word_spaces"]
     word_angle_parens = data["word_angle_parens"]
     word = data["word"]
-    count_summary = 1
     count_inexact_hits = 1
     count_exact_hits = 1
+    count_summary = 1
+    data["riksdagen_document_id"] = None
     summaries = {}
     for record in records:
         if debug:
             print(f"Working of record number {count_summary}")
         summary = record["summary"]
-        # This is needed by add_sentence()
-        data["riksdagen_document_id"] = record["id"]
+        # This is needed by present_sentence() and add_usage_example()
+        # downstream
+        document_id = record["id"]
+        if debug_summaries:
+            print(f" Found in https://data.riksdagen.se/dokument/{document_id}")
+        data["riksdagen_document_id"] = document_id
         # match only the exact word
         added = False
         if word in summary:
@@ -525,18 +529,20 @@ def extract_summaries_from_records(records, data):
             if word_spaces in summary or word_angle_parens in summary:
                 count_exact_hits += 1
                 # add to dictionary
-                summaries[summary] = data
+                if debug_summaries:
+                    print(f"adding {summary} and {data} to summaries")
+                summaries[summary] = document_id
                 added = True
             else:
                 if debug:
                     print("No exact hit in summary. Skipping.")
         else:
-            if debug and added is False:
+            if debug_summaries and added is False:
                 print(f"'{word}' not found as part of a word or a " +
                       "word in the summary. Skipping")
         count_summary += 1
-    if debug:
-        print(summaries)
+    if debug_summaries:
+        print(f"summaries: {summaries}")
     print(f"Got {count_exact_hits} exact hits for the form '{word}' " +
           f"among {count_inexact_hits} where the lexeme was present.")
     return summaries
@@ -557,7 +563,10 @@ def get_sentences_from_apis(result):
         unsorted_sentences = {}
         # Iterate through the dictionary
         for summary in summaries:
-            data = summaries[summary]
+            document_id = summaries[summary]
+            if debug_summaries:
+                print(f"Got back summary {summary} with the " +
+                      f"correct document_id: {document_id}?")
             suitable_sentences = find_usage_examples_from_summary(
                 word_spaces=data["word_spaces"],
                 summary=summary
@@ -565,9 +574,10 @@ def get_sentences_from_apis(result):
             if len(suitable_sentences) > 0:
                 for sentence in suitable_sentences:
                     # Make sure the riksdagen_document_id follows
-                    unsorted_sentences[sentence] = data
+                    unsorted_sentences[sentence] = document_id
         if debug_sentences:
-            print(f"unsorted_sentences: {unsorted_sentences}")
+            if len(unsorted_sentences) > 0:
+                print(f"unsorted_sentences: {unsorted_sentences}")
         print(f"Found {len(unsorted_sentences)} suitable sentences " +
               "from the Riksdagen API")
         return unsorted_sentences
@@ -575,7 +585,7 @@ def get_sentences_from_apis(result):
     # TODO Europarl corpus
 
 
-def present_sentence(sentence, data):
+def present_sentence(data, sentence, document_id):
     word_count = count_words(sentence)
     if yes_no_question(
             f"Found the following sentence with {word_count} " +
@@ -594,7 +604,7 @@ def present_sentence(sentence, data):
             if (sense_id is not None and sense_gloss is not None):
                 result = False
                 result = add_usage_example(
-                    document_id=data["riksdagen_document_id"],
+                    document_id=document_id,
                     sentence=sentence,
                     lid=lid,
                     form_id=data["form_id"],
@@ -616,10 +626,11 @@ def parse_lexeme_data(results):
     """Go through the SPARQL results randomly"""
     if debug:
         print("found these words:")
+        words = []
         for result in results:
             data = extract_data(result)
-            word = data["word"]
-            print(word)
+            words.append(data["word"])
+        print(words)
     # Go through the results at random
     # from http://stackoverflow.com/questions/306400/ddg#306417
     earlier_choices = []
@@ -631,24 +642,31 @@ def parse_lexeme_data(results):
             exit(0)
         else:
             result = random.choice(results)
-            data = extract_data(result)
+            # data = extract_data(result)
             # Prevent running more than once for each result
             if result not in earlier_choices:
                 earlier_choices.append(result)
+                data = extract_data(result)
                 # This dict holds the sentence as key and riksdagen_document_id
                 # as value
-                sentences_and_data = get_sentences_from_apis(result)
+                sentences_and_document_id = get_sentences_from_apis(result)
                 # Sort so that the shortest sentence is first
-                sorted_sentences = sorted(sentences_and_data, key=len)
-                if sentences_and_data is not None:
+                sorted_sentences = sorted(sentences_and_document_id, key=len)
+                if sentences_and_document_id is not None:
                     example_was_added = False
                     count = 1
+                    # Loop through sentence list
                     for sentence in sorted_sentences:
-                        if debug:
-                            print("Presenting sentence " +
-                                  f"{count}/{len(sentences_and_data)}")
+                        print("Presenting sentence " +
+                              f"{count}/{len(sentences_and_document_id)}")
+                        document_id = sentences_and_document_id[sentence]
+                        if debug_sentences:
+                            print("with document_id: " +
+                                  f"{document_id}")
                         example_was_added = present_sentence(
-                            sentence, sentences_and_data[sentence]
+                            data,
+                            sentence,
+                            document_id
                         )
                         count += 1
                         # Break out of the for loop because one example was
