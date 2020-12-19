@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import datetime
+from datetime import datetime, timezone
 import random
 import requests
 # from pprint import pprint
@@ -50,6 +50,7 @@ debug = True
 debug_duplicates = False
 debug_excludes = False
 debug_json = False
+debug_riksdagen = False
 debug_sentences = False
 debug_summaries = False
 # Logging for LexData
@@ -156,6 +157,7 @@ def extract_data(result):
 def fetch_from_riksdagen(word):
     # Look up records from the Riksdagen API
     records = []
+    print("Downloading from the Riksdagen API...")
     for i in range(1, int(riksdagen_results_size / 20) + 1):
         if i > 1:
             # break if i is more than 1 and the results are less than 20
@@ -166,7 +168,7 @@ def fetch_from_riksdagen(word):
                "&sort=rel" +
                "&sortorder=desc&utformat=json&a=s" +
                f"&p={i}")
-        if debug:
+        if debug_riksdagen:
             print(url)
         r = requests.get(url)
         data = r.json()
@@ -177,7 +179,7 @@ def fetch_from_riksdagen(word):
                 records.append(item)
         else:
             # We break if the API does not return any more results
-            if debug:
+            if debug_riksdagen:
                 print("API did not return any (more) results")
             break
     if debug:
@@ -194,8 +196,16 @@ def add_usage_example(
         form_id=None,
         sense_id=None,
         word=None,
+        publication_date=None,
 ):
     # Use WikibaseIntegrator aka wbi to upload the changes
+    if publication_date is not None:
+        publication_date = datetime.fromisoformat(publication_date)
+    else:
+        print("Publication date of document {document_id} " +
+              "is missing. We have no fallback for that. " +
+              "Abort adding usage example.")
+        return False
     link_to_form = wbi_core.Form(
         prop_nr="P5830",
         value=form_id,
@@ -219,13 +229,18 @@ def add_usage_example(
         ),
         wbi_core.Time(
             prop_nr="P813",  # Fetched today
-            time=datetime.datetime.utcnow().replace(
-                tzinfo=datetime.timezone.utc
+            time=datetime.utcnow().replace(
+                tzinfo=timezone.utc
             ).replace(
                 hour=0,
                 minute=0,
                 second=0,
             ).strftime("+%Y-%m-%dT%H:%M:%SZ"),
+            is_reference=True,
+        ),
+        wbi_core.Time(
+            prop_nr="P577",  # Publication date
+            time=publication_date.strftime("+%Y-%m-%dT%H:%M:%SZ"),
             is_reference=True,
         )
     ]
@@ -510,18 +525,22 @@ def extract_summaries_from_records(records, data):
     count_inexact_hits = 1
     count_exact_hits = 1
     count_summary = 1
-    data["riksdagen_document_id"] = None
     summaries = {}
     for record in records:
-        if debug:
+        if debug_summaries:
             print(f"Working of record number {count_summary}")
         summary = record["summary"]
         # This is needed by present_sentence() and add_usage_example()
         # downstream
         document_id = record["id"]
+        date = record["publicerad"]
         if debug_summaries:
-            print(f" Found in https://data.riksdagen.se/dokument/{document_id}")
-        data["riksdagen_document_id"] = document_id
+            print(
+                f"Found in https://data.riksdagen.se/dokument/{document_id}"
+            )
+        record_data = {}
+        record_data["document_id"] = document_id
+        record_data["date"] = date
         # match only the exact word
         added = False
         if word in summary:
@@ -531,10 +550,10 @@ def extract_summaries_from_records(records, data):
                 # add to dictionary
                 if debug_summaries:
                     print(f"adding {summary} and {data} to summaries")
-                summaries[summary] = document_id
+                summaries[summary] = record_data
                 added = True
             else:
-                if debug:
+                if debug_summaries:
                     print("No exact hit in summary. Skipping.")
         else:
             if debug_summaries and added is False:
@@ -543,7 +562,8 @@ def extract_summaries_from_records(records, data):
         count_summary += 1
     if debug_summaries:
         print(f"summaries: {summaries}")
-    print(f"Got {count_exact_hits} exact hits for the form '{word}' " +
+    print(f"Processed {count_summary} and found " +
+          f"{count_exact_hits} exact hits for the form '{word}' " +
           f"among {count_inexact_hits} where the lexeme was present.")
     return summaries
 
@@ -563,7 +583,9 @@ def get_sentences_from_apis(result):
         unsorted_sentences = {}
         # Iterate through the dictionary
         for summary in summaries:
-            document_id = summaries[summary]
+            # Get result_data
+            result_data = summaries[summary]
+            document_id = result_data["document_id"]
             if debug_summaries:
                 print(f"Got back summary {summary} with the " +
                       f"correct document_id: {document_id}?")
@@ -574,7 +596,7 @@ def get_sentences_from_apis(result):
             if len(suitable_sentences) > 0:
                 for sentence in suitable_sentences:
                     # Make sure the riksdagen_document_id follows
-                    unsorted_sentences[sentence] = document_id
+                    unsorted_sentences[sentence] = result_data
         if debug_sentences:
             if len(unsorted_sentences) > 0:
                 print(f"unsorted_sentences: {unsorted_sentences}")
@@ -585,7 +607,12 @@ def get_sentences_from_apis(result):
     # TODO Europarl corpus
 
 
-def present_sentence(data, sentence, document_id):
+def present_sentence(
+        data,
+        sentence,
+        document_id,
+        date
+):
     word_count = count_words(sentence)
     if yes_no_question(
             f"Found the following sentence with {word_count} " +
@@ -610,6 +637,7 @@ def present_sentence(data, sentence, document_id):
                     form_id=data["form_id"],
                     sense_id=sense_id,
                     word=data["word"],
+                    publication_date=date,
                 )
                 if result:
                     print("Successfully added usage example " +
@@ -649,24 +677,27 @@ def parse_lexeme_data(results):
                 data = extract_data(result)
                 # This dict holds the sentence as key and riksdagen_document_id
                 # as value
-                sentences_and_document_id = get_sentences_from_apis(result)
+                sentences_and_result_data = get_sentences_from_apis(result)
                 # Sort so that the shortest sentence is first
-                sorted_sentences = sorted(sentences_and_document_id, key=len)
-                if sentences_and_document_id is not None:
+                sorted_sentences = sorted(sentences_and_result_data, key=len)
+                if sentences_and_result_data is not None:
                     example_was_added = False
                     count = 1
                     # Loop through sentence list
                     for sentence in sorted_sentences:
                         print("Presenting sentence " +
-                              f"{count}/{len(sentences_and_document_id)}")
-                        document_id = sentences_and_document_id[sentence]
+                              f"{count}/{len(sorted_sentences)}")
+                        result_data = sentences_and_result_data[sentence]
+                        document_id = result_data["document_id"]
+                        date = result_data["date"]
                         if debug_sentences:
                             print("with document_id: " +
-                                  f"{document_id}")
+                                  f"{document_id} from {date}")
                         example_was_added = present_sentence(
                             data,
                             sentence,
-                            document_id
+                            document_id,
+                            date
                         )
                         count += 1
                         # Break out of the for loop because one example was
