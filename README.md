@@ -5,7 +5,6 @@ Scripts used to find and add usage examples to Wikidata Lexemes. All scripts her
 Script used to semi-automatically import usage examples from the Riksdagen Open Data API (400.000 documents) and RAÄ K-samsök (10 mio. items). 
 
 To get started install the following libraries with your package manager or python PIP:
-* jellyfish
 * requests
 * wikibaseintegrator
 
