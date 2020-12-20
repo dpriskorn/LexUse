@@ -7,7 +7,6 @@ Script used to semi-automatically import usage examples from the Riksdagen Open 
 To get started install the following libraries with your package manager or python PIP:
 * jellyfish
 * requests
-* LexData
 * wikibaseintegrator
 
 Please create a bot password for running the script for
