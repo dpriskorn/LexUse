@@ -51,6 +51,7 @@ debug_duplicates = False
 debug_excludes = False
 debug_json = False
 debug_riksdagen = False
+debug_senses = True
 debug_sentences = False
 debug_summaries = False
 
@@ -116,6 +117,8 @@ def fetch_senses(lid):
             "gloss": row["gloss"]["value"]
         }
         number += 1
+    if debug_senses:
+        print(f"senses {senses}")
     return senses
 # print(fetch_senses("L39751"))
 
@@ -265,7 +268,7 @@ def add_usage_example(
         ),
         wbi_core.Time(
             prop_nr="P577",  # Publication date
-            time=publication_date.strftime("+%Y-%m-%dT%H:%M:%SZ"),
+            time=publication_date.strftime("+%Y-%m-%dT00:00:00Z"),
             is_reference=True,
         )
     ]
@@ -314,8 +317,8 @@ def find_usage_examples_from_summary(
     cleaned_summary = cleaned_summary.replace("m.m", "yyy")
     cleaned_summary = cleaned_summary.replace("dvs.", "qqq")
     cleaned_summary = cleaned_summary.replace("bl.", "zzz")
-    # TODO add "ang."
-
+    # TODO add "ang." "kl." "s.k."
+   
     # from https://stackoverflow.com/questions/3549075/
     # regex-to-find-all-sentences-of-text
     sentences = re.findall(
@@ -389,7 +392,7 @@ def prompt_choose_sense(senses):
             number = 1
             # Put each key -> value into a new nested dictionary
             for sense in senses:
-                options += f"\n{number}) {sense[number]['gloss']}"
+                options += f"\n{number}) {senses[number]['gloss']}"
                 number += 1
             options += "\nPlease input a number or 0 to cancel: "
             choice = int(input(options))
@@ -398,7 +401,8 @@ def prompt_choose_sense(senses):
             # better try again... Return to the start of the loop
             continue
         else:
-            print(f"len: {len(senses)}")
+            if debug_senses:
+                print(f"len: {len(senses)}")
             if choice > 0 and choice <= len(senses):
                 return {
                     "sense_id": senses[choice]["sense_id"],
