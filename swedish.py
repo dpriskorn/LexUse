@@ -46,7 +46,7 @@ language = "swedish"
 language_code = "sv"
 wd_prefix = "http://www.wikidata.org/entity/"
 min_word_count = 5
-max_word_count = 20
+max_word_count = 15
 debug = False
 debug_duplicates = False
 debug_excludes = False
@@ -59,6 +59,22 @@ debug_summaries = False
 #
 # Functions
 #
+
+
+def yes_no_skip_question(message: str):
+    # https://www.quora.com/
+    # I%E2%80%99m-new-to-Python-how-can-I-write-a-yes-no-question
+    # this will loop forever
+    while True:
+        answer = input(message + ' [(Y)es/(n)o/(s)kip this form]: ')
+        if len(answer) == 0 or answer[0].lower() in ('y', 'n', 's'):
+            if len(answer) == 0:
+                return True
+            elif answer[0].lower() == 's':
+                return None
+            else:
+                # the == operator just returns a boolean,
+                return answer[0].lower() == 'y'
 
 
 def yes_no_question(message: str):
@@ -112,7 +128,8 @@ def count_number_of_senses_with_P5137(lid):
 def fetch_senses(lid):
     """Returns dictionary with numbers as keys and a dictionary as value with
     sense id and gloss"""
-    # Thanks to Lucas Werkmeister for helping with this query.
+    # Thanks to Lucas Werkmeister https://www.wikidata.org/wiki/Q57387675 for
+    # helping with this query.
     result = (sparql_query(f'''
     SELECT
     ?sense ?gloss
@@ -170,7 +187,6 @@ def fetch_lexeme_forms():
       {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
     }}
     limit {sparql_results_size}
-    offset 50
     ''')
 
 
@@ -366,7 +382,7 @@ def find_usage_examples_from_summary(
     cleaned_summary = cleaned_summary.replace("m.m", "yyy")
     cleaned_summary = cleaned_summary.replace("dvs.", "qqq")
     cleaned_summary = cleaned_summary.replace("bl.", "zzz")
-    # TODO add "ang." "kl." "s.k."
+    # TODO add "ang." "kl." "s.k." "resp."
 
     # from https://stackoverflow.com/questions/3549075/
     # regex-to-find-all-sentences-of-text
@@ -527,7 +543,7 @@ def prompt_sense_approval(sentence=None, data=None):
                       "more senses to lexemes by matching on QID concepts " +
                       "with similar labels and descriptions in the lexeme " +
                       "language." +
-                      f"Search for {word} in Wikidata: " +
+                      f"\nSearch for {word} in Wikidata: " +
                       "https://www.wikidata.org/w/index.php?" +
                       f"search={word}&title=Special%3ASearch&" +
                       "profile=advanced&fulltext=0&" +
@@ -537,8 +553,8 @@ def prompt_sense_approval(sentence=None, data=None):
         else:
             print(f"Found {number_of_senses} senses.")
             sense = False
-            # TODO check that all senses has a gloss matching the language of the
-            # example
+            # TODO check that all senses has a gloss matching the language of
+            # the example
             sense = prompt_choose_sense(senses)
             if sense is not False:
                 logging.debug("setting sense")
@@ -624,10 +640,10 @@ def extract_summaries_from_records(records, data):
                       "word in the summary. Skipping")
         count_summary += 1
     if debug_summaries:
-        print(f"summaries: {summaries}")
+        logging.debug(f"summaries:{summaries}")
     print(f"Processed {count_summary} records and found " +
-          f"{count_exact_hits} exact hits for the form '{word}' " +
-          f"among {count_inexact_hits} where the lexeme was present.")
+          f"{count_exact_hits} exact hits for the form '{word}'")
+    logging.info(f"among {count_inexact_hits} where the lexeme was present.")
     return summaries
 
 
@@ -675,13 +691,15 @@ def present_sentence(
         document_id,
         date
 ):
+    """Return True, False or None (skip)"""
     word_count = count_words(sentence)
-    if yes_no_question(
+    result = yes_no_skip_question(
             f"Found the following sentence with {word_count} " +
             "words. Is it suitable as a usage example " +
             f"for the form '{data['word']}'? \n" +
             f"'{sentence}'"
-    ):
+    )
+    if result:
         selected_sense = prompt_sense_approval(
             sentence=sentence,
             data=data
@@ -710,6 +728,11 @@ def present_sentence(
                     return False
             else:
                 return False
+    elif result is None:
+        # None means skip
+        return None
+    else:
+        return False
 
 
 def parse_lexeme_data(results):
@@ -718,8 +741,10 @@ def parse_lexeme_data(results):
     for result in results:
         data = extract_data(result)
         words.append(data["word"])
-    logging.debug(f"found these words:{words}")
+    print(f"Got {len(words)} suitable forms from Wikidata")
+    logging.debug(f"words:{words}")
     # Go through the results at random
+    print("Going through the list of forms at random.")
     # from http://stackoverflow.com/questions/306400/ddg#306417
     earlier_choices = []
     while (True):
@@ -753,7 +778,7 @@ def parse_lexeme_data(results):
                         if debug_sentences:
                             print("with document_id: " +
                                   f"{document_id} from {date}")
-                        example_was_added = present_sentence(
+                        result = present_sentence(
                             data,
                             sentence,
                             document_id,
@@ -761,21 +786,24 @@ def parse_lexeme_data(results):
                         )
                         count += 1
                         # Break out of the for loop because one example was
-                        # already choosen for this result
-                        if example_was_added:
+                        # already choosen for this result or if the form was was
+                        # skipped
+                        if result or result is None:
                             break
 
 
 def introduction():
     if yes_no_question("This script enables you to " +
                        "semi-automatically add usage examples to " +
-                       "lexemes. \nPlease pay attention to the lexical " +
+                       "lexemes with both good senses and forms " +
+                       "(with P5137 and grammatical features respectively). " +
+                       "\nPlease pay attention to the lexical " +
                        "category of the lexeme. \nAlso try " +
                        "adding only short and concise " +
                        "examples to avoid bloat and maximise " +
                        "usefullness. \nThis script adds edited " +
                        "lexemes (indefinitely) to your watchlist. " +
-                       "Continue?"):
+                       "\nContinue?"):
         return True
     else:
         return False
@@ -808,7 +836,7 @@ def main():
         # Instantiation
         #
         # Authenticate with WikibaseIntegrator
-        print("Logging in with WikibaseIntegrator")
+        print("Logging in with Wikibase Integrator")
         global login_instance
         login_instance = wbi_login.Login(
             user=config.username, pwd=config.password
