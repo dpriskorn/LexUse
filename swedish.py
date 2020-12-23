@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
+import argparse
 from datetime import datetime, timezone
 import random
-import requests
 # from pprint import pprint
 import re
 import time
+# import asyncio
+import logging
 
-# import LexData
-# import logging
+import httpx
 from wikibaseintegrator import wbi_core, wbi_login
 
 # Create a file named config.py yourself with the following content:
@@ -19,7 +20,7 @@ from wikibaseintegrator import wbi_core, wbi_login
 import config
 
 # This script enables finding example sentences via the Riksdagen API where
-# everything is CC0
+# everything is out of copyright
 
 # Pseudo code
 # fetch a list of swedish lexeme forms and words
@@ -40,7 +41,7 @@ import config
 
 # Settings
 sparql_results_size = 500
-riksdagen_results_size = 160  # keep to multiples of 20
+riksdagen_max_results_size = 160  # keep to multiples of 20
 language = "swedish"
 language_code = "sv"
 wd_prefix = "http://www.wikidata.org/entity/"
@@ -55,15 +56,10 @@ debug_senses = True
 debug_sentences = False
 debug_summaries = False
 
-# Global variable
-# FIXME only log in once, pass the session from WBI to LexData
-global login
-login = None
-
-
 #
 # Functions
 #
+
 
 def yes_no_question(message: str):
     # https://www.quora.com/
@@ -83,7 +79,7 @@ def sparql_query(query):
     # from https://stackoverflow.com/questions/55961615/
     # how-to-integrate-wikidata-query-in-python
     url = 'https://query.wikidata.org/sparql'
-    r = requests.get(url, params={'format': 'json', 'query': query})
+    r = httpx.get(url, params={'format': 'json', 'query': query})
     data = r.json()
     # pprint(data)
     results = data["results"]["bindings"]
@@ -96,9 +92,27 @@ def sparql_query(query):
         return results
 
 
+def count_number_of_senses_with_P5137(lid):
+    """Returns an int"""
+    result = (sparql_query(f'''
+    SELECT
+    (COUNT(?sense) as ?count)
+    WHERE {{
+      VALUES ?l {{wd:{lid}}}.
+      ?l ontolex:sense ?sense.
+      ?sense skos:definition ?gloss.
+      # Exclude lexemes without a linked QID from at least one sense
+      ?sense wdt:P5137 [].
+    }}'''))
+    count = int(result[0]["count"]["value"])
+    logging.debug(f"count:{count}")
+    return count
+
+
 def fetch_senses(lid):
     """Returns dictionary with numbers as keys and a dictionary as value with
     sense id and gloss"""
+    # Thanks to Lucas Werkmeister for helping with this query.
     result = (sparql_query(f'''
     SELECT
     ?sense ?gloss
@@ -106,6 +120,8 @@ def fetch_senses(lid):
       VALUES ?l {{wd:{lid}}}.
       ?l ontolex:sense ?sense.
       ?sense skos:definition ?gloss.
+      # Get only the swedish gloss, exclude otherwise
+      FILTER(LANG(?gloss) = "{language_code}")
       # Exclude lexemes without a linked QID from at least one sense
       ?sense wdt:P5137 [].
     }}'''))
@@ -117,27 +133,24 @@ def fetch_senses(lid):
             "gloss": row["gloss"]["value"]
         }
         number += 1
-    if debug_senses:
-        print(f"senses {senses}")
+    logging.debug(f"senses:{senses}")
     return senses
-# print(fetch_senses("L39751"))
 
 
 def fetch_lexeme_forms():
-    return sparql_query('''
+    return sparql_query(f'''
     SELECT DISTINCT
-    #(COUNT(?l) AS ?count)
     ?l ?form ?word ?catLabel
-    WHERE {
+    WHERE {{
       ?l a ontolex:LexicalEntry; dct:language wd:Q9027.
-      VALUES ?excluded {
+      VALUES ?excluded {{
         # exclude affixes and interfix
         wd:Q62155 # affix
         wd:Q134830 # prefix
         wd:Q102047 # suffix
         wd:Q1153504 # interfix
-      }
-      MINUS {?l wdt:P31 ?excluded.}
+      }}
+      MINUS {{?l wdt:P31 ?excluded.}}
       ?l wikibase:lexicalCategory ?cat.
 
       # We want only lexemes with both forms and at least one sense
@@ -148,17 +161,17 @@ def fetch_lexeme_forms():
       ?sense wdt:P5137 [].
 
       # This remove all lexemes with at least one example which is not
-      # optimal
-      MINUS {?l wdt:P5831 ?example.}
+      # ideal
+      MINUS {{?l wdt:P5831 ?example.}}
       ?form wikibase:grammaticalFeature [].
       # We extract the word of the form
       ?form ontolex:representation ?word.
       SERVICE wikibase:label
-      { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }
-    }''' +
-             f'''limit {sparql_results_size}
-             offset 50
-             ''')
+      {{ bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en". }}
+    }}
+    limit {sparql_results_size}
+    offset 50
+    ''')
 
 
 def extract_data(result):
@@ -182,11 +195,47 @@ def extract_data(result):
     )
 
 
+# async def async_fetch_from_url(url):
+#     async with httpx.AsyncClient() as client:
+#         response = await client.get(url)
+#         return response
+
+
+def get_riksdagen_result_count(word):
+    # First find out the number of results
+    url = (f"http://data.riksdagen.se/dokumentlista/?sok={word}" +
+           "&sort=rel&sortorder=desc&utformat=json&a=s&p=1")
+    r = httpx.get(url)
+    data = r.json()
+    results = int(data["dokumentlista"]["@traffar"])
+    logging.info(f"results:{results}")
+    return results
+
+
+# def async_fetch_from_riksdagen(word):
+#     # Get total results count
+#     results = get_riksdagen_result_count(word)
+#     # Generate the urls
+#     if results > riksdagen_max_results_size:
+#         results = riksdagen_max_results_size
+#     # generate urls
+#     urls = []
+#     # divide by 20 to know how many requests to send
+#     for i in range(1, int(results / 20)):
+#         urls.append(f"http://data.riksdagen.se/dokumentlista/?sok={word}" +
+#                     f"&sort=rel&sortorder=desc&utformat=json&a=s&p={i}")
+#     logging.debug(f"urls:{urls}")
+#     # get urls asynchroniously
+#     tasks = [(session, url, progress_queue) for url in urls]
+#     return await asyncio.gather(*tasks)
+#     results = asyncio.run(async_fetch_from_riksdagen("test"))
+
+
 def fetch_from_riksdagen(word):
     # Look up records from the Riksdagen API
     records = []
     print("Downloading from the Riksdagen API...")
-    for i in range(1, int(riksdagen_results_size / 20) + 1):
+    for i in range(1, int(riksdagen_max_results_size / 20) + 1):
         if i > 1:
             # break if i is more than 1 and the results are less than 20
             # because that means that there are no more results in page 2-5
@@ -198,7 +247,7 @@ def fetch_from_riksdagen(word):
                f"&p={i}")
         if debug_riksdagen:
             print(url)
-        r = requests.get(url)
+        r = httpx.get(url)
         data = r.json()
         # check if dokument is in the list
         key_list = list(data["dokumentlista"].keys())
@@ -318,7 +367,7 @@ def find_usage_examples_from_summary(
     cleaned_summary = cleaned_summary.replace("dvs.", "qqq")
     cleaned_summary = cleaned_summary.replace("bl.", "zzz")
     # TODO add "ang." "kl." "s.k."
-   
+
     # from https://stackoverflow.com/questions/3549075/
     # regex-to-find-all-sentences-of-text
     sentences = re.findall(
@@ -401,8 +450,7 @@ def prompt_choose_sense(senses):
             # better try again... Return to the start of the loop
             continue
         else:
-            if debug_senses:
-                print(f"len: {len(senses)}")
+            logging.debug(f"length_of_senses:{len(senses)}")
             if choice > 0 and choice <= len(senses):
                 return {
                     "sense_id": senses[choice]["sense_id"],
@@ -456,54 +504,76 @@ def prompt_sense_approval(sentence=None, data=None):
     # This returns a tuple if one sense or a dictionary if multiple senses
     senses = fetch_senses(lid)
     number_of_senses = len(senses)
-    aborted = False
-    if debug:
-        print(f"number_of_senses: {number_of_senses}")
-    if number_of_senses == 1:
-        gloss = senses[1]["gloss"]
-        if yes_no_question("Found only one sense. " +
-                           "Does this example fit the following " +
-                           f"gloss? \n'{gloss}'"):
-            return {
-                "sense_id": senses[1]["sense_id"],
-                "sense_gloss": gloss
-            }
+    logging.debug(f"number_of_senses:{number_of_senses}")
+    if number_of_senses > 0:
+        aborted = False
+        if number_of_senses == 1:
+            gloss = senses[1]["gloss"]
+            if yes_no_question("Found only one sense. " +
+                               "Does this example fit the following " +
+                               f"gloss? \n'{gloss}'"):
+                return {
+                    "sense_id": senses[1]["sense_id"],
+                    "sense_gloss": gloss
+                }
+            else:
+                word = data['word']
+                print("Cancelled adding sentence as it does not match the " +
+                      "only sense currently present. \nLexemes are " +
+                      "entirely dependent on good quality QIDs. \n" +
+                      "Please add labels " +
+                      "and descriptions to relevant QIDs and then use " +
+                      "MachtSinn to add " +
+                      "more senses to lexemes by matching on QID concepts " +
+                      "with similar labels and descriptions in the lexeme " +
+                      "language." +
+                      f"Search for {word} in Wikidata: " +
+                      "https://www.wikidata.org/w/index.php?" +
+                      f"search={word}&title=Special%3ASearch&" +
+                      "profile=advanced&fulltext=0&" +
+                      "advancedSearch-current=%7B%7D&ns0=1")
+                time.sleep(5)
+                return False
         else:
-            print("Cancelled adding sentence as it does not match the " +
-                  "only sense currently present. Use MachtSinn to add " +
-                  "more senses to lexemes by matching on QID concepts " +
-                  "with similar labels and descriptions in the lexeme " +
-                  "language.")
-            time.sleep(5)
+            print(f"Found {number_of_senses} senses.")
+            sense = False
+            # TODO check that all senses has a gloss matching the language of the
+            # example
+            sense = prompt_choose_sense(senses)
+            if sense is not False:
+                logging.debug("setting sense")
+                return {
+                    "sense_id": sense["sense_id"],
+                    "sense_gloss": sense["gloss"]
+                }
+            else:
+                aborted = True
+        if not aborted:
+            if (sense_id is not None and sense_gloss is None):
+                print("Swedish gloss is missing for the sense" +
+                      f" {sense_id}, " +
+                      "please fix it manually here: " +
+                      f"{wd_prefix + lid}")
+                time.sleep(5)
+                return False
+            else:
+                print("Sense_id is None. This should not be reached.")
+        else:
+            # Aborted
             return False
     else:
-        print(f"Found {number_of_senses} senses.")
-        sense = False
-        # TODO check that all senses has a gloss matching the language of the
-        # example
-        sense = prompt_choose_sense(senses)
-        if sense is not False:
-            if debug:
-                print("debug: setting sense")
-            return {
-                "sense_id": sense["sense_id"],
-                "sense_gloss": sense["gloss"]
-            }
-        else:
-            aborted = True
-    if not aborted:
-        if (sense_id is not None and sense_gloss is None):
-            print("Swedish gloss is missing for the sense" +
-                  f" {sense_id}, " +
-                  "please fix it manually here: " +
+        # Check if any suitable senses exist
+        count = (count_number_of_senses_with_P5137("L35455"))
+        if count > 0:
+            print("Swedish gloss is missing for {count} sense(s)" +
+                  ". Please fix it manually here: " +
                   f"{wd_prefix + lid}")
             time.sleep(5)
             return False
         else:
-            print("Sense_id is None. This should not be reached.")
-    else:
-        # Aborted
-        return False
+            logging.debug("no senses this should never be reached " +
+                          "if the sparql result was sane")
+            return False
 
 
 def extract_summaries_from_records(records, data):
@@ -590,9 +660,8 @@ def get_sentences_from_apis(result):
                 for sentence in suitable_sentences:
                     # Make sure the riksdagen_document_id follows
                     unsorted_sentences[sentence] = result_data
-        if debug_sentences:
-            if len(unsorted_sentences) > 0:
-                print(f"unsorted_sentences: {unsorted_sentences}")
+        if len(unsorted_sentences) > 0:
+            logging.debug(f"unsorted_sentences: {unsorted_sentences}")
         print(f"Found {len(unsorted_sentences)} suitable sentences " +
               "from the Riksdagen API")
         return unsorted_sentences
@@ -645,13 +714,11 @@ def present_sentence(
 
 def parse_lexeme_data(results):
     """Go through the SPARQL results randomly"""
-    if debug:
-        print("found these words:")
-        words = []
-        for result in results:
-            data = extract_data(result)
-            words.append(data["word"])
-        print(words)
+    words = []
+    for result in results:
+        data = extract_data(result)
+        words.append(data["word"])
+    logging.debug(f"found these words:{words}")
     # Go through the results at random
     # from http://stackoverflow.com/questions/306400/ddg#306417
     earlier_choices = []
@@ -714,18 +781,42 @@ def introduction():
         return False
 
 
-#
-# main
-#
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-l",
+        "--log",
+        help="Loglevel",
+    )
+    args = parser.parse_args()
+    loglevel = args.log
+    if loglevel:
+        numeric_level = getattr(logging, loglevel.upper(), None)
+        if not isinstance(numeric_level, int):
+            raise ValueError('Invalid log level: %s' % loglevel)
+        logging.basicConfig(level=numeric_level)
+    else:
+        logging.basicConfig()
+    logging.captureWarnings(True)
+    # logging.debug("test")
+    # async_fetch_from_riksdagen("test")
+    # exit(0)
 
-begin = introduction()
-if begin:
-    #
-    # Instantiation
-    #
-    # Authenticate with WikibaseIntegrator
-    print("Logging in with WikibaseIntegrator")
-    login_instance = wbi_login.Login(user=config.username, pwd=config.password)
-    print("Fetching lexeme forms to work on")
-    results = fetch_lexeme_forms()
-    parse_lexeme_data(results)
+    begin = introduction()
+    if begin:
+        #
+        # Instantiation
+        #
+        # Authenticate with WikibaseIntegrator
+        print("Logging in with WikibaseIntegrator")
+        global login_instance
+        login_instance = wbi_login.Login(
+            user=config.username, pwd=config.password
+        )
+        print("Fetching lexeme forms to work on")
+        results = fetch_lexeme_forms()
+        parse_lexeme_data(results)
+
+
+if __name__ == "__main__":
+    main()
