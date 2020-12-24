@@ -40,8 +40,8 @@ import config
 #      upload to WD
 
 # Settings
-sparql_results_size = 500
-riksdagen_max_results_size = 160  # keep to multiples of 20
+sparql_results_size = 100
+riksdagen_max_results_size = 260  # keep to multiples of 20
 language = "swedish"
 language_code = "sv"
 wd_prefix = "http://www.wikidata.org/entity/"
@@ -337,17 +337,21 @@ def add_usage_example(
             is_reference=True,
         )
     ]
+    # This is th usage example statement
     claim = wbi_core.MonolingualText(
         sentence,
         "P5831",
         language="sv",
+        # Add qualifiers
         qualifiers=[link_to_form, link_to_sense],
+        # Add reference
         references=[reference],
     )
-    # print(claim)
     if debug_json:
-        print(claim.get_json_representation())
-    item = wbi_core.ItemEngine(data=[claim], item_id=lid)
+        logging.debug(f"claim:{claim.get_json_representation()}")
+    item = wbi_core.ItemEngine(
+        data=[claim], append_value=["P5831"], item_id=lid,
+    )
     if debug_json:
         print(item.get_json_representation())
     result = item.write(
@@ -355,7 +359,7 @@ def add_usage_example(
         edit_summary="Added usage example with [[Wikidata:LexUse]]"
     )
     if debug_json:
-        print(f"Result from WBI: {result}")
+        logging.debug(f"result from WBI:{result}")
     return result
 
 
