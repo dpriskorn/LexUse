@@ -207,3 +207,32 @@ def extract_summaries_from_records(records, data):
           f"{count_exact_hits} exact hits for the form '{word}'")
     logging.info(f"among {count_inexact_hits} where the lexeme was present.")
     return summaries
+
+
+def get_records(data):
+    word = data["word"]
+    records = fetch(word)
+    if records is not None:
+        if config.debug:
+            print("Looping through records from Riksdagen")
+        summaries = extract_summaries_from_records(records, data)
+        unsorted_sentences = {}
+        # Iterate through the dictionary
+        for summary in summaries:
+            # Get result_data
+            result_data = summaries[summary]
+            document_id = result_data["document_id"]
+            if config.debug_summaries:
+                print(f"Got back summary {summary} with the " +
+                      f"correct document_id: {document_id}?")
+            suitable_sentences = find_usage_examples_from_summary(
+                word_spaces=data["word_spaces"],
+                summary=summary
+            )
+            if len(suitable_sentences) > 0:
+                for sentence in suitable_sentences:
+                    # Make sure the riksdagen_document_id follows
+                    unsorted_sentences[sentence] = result_data
+        if len(unsorted_sentences) > 0 and config.debug_sentences:
+            logging.debug(f"unsorted_sentences:{unsorted_sentences}")
+        return unsorted_sentences

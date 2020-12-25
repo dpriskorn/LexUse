@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import logging
+from importlib import reload
 
 import util
 
@@ -25,6 +26,8 @@ def main():
         numeric_level = getattr(logging, loglevel.upper(), None)
         if not isinstance(numeric_level, int):
             raise ValueError('Invalid log level: %s' % loglevel)
+        print(f"Setting loglevel {numeric_level}")
+        reload(logging)
         logging.basicConfig(level=numeric_level)
     else:
         logging.basicConfig()
@@ -34,9 +37,6 @@ def main():
 
     begin = util.introduction()
     if begin:
-        #
-        # Instantiation
-        #
         print("Fetching lexeme forms to work on")
         results = util.fetch_lexeme_forms()
         util.process_lexeme_data(results)

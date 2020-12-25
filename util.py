@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from datetime import datetime, timezone
+import json
 import logging
+import os.path
 import random
 import time
 # import asyncio
@@ -402,33 +404,7 @@ def get_sentences_from_apis(result):
     print(f"Trying to find examples for the {data['category']} lexeme " +
           f"form: {word} with id: {form_id}")
     # Riksdagen API
-    records = riksdagen.fetch(word)
-    if records is not None:
-        if config.debug:
-            print("Looping through records from Riksdagen")
-        summaries = riksdagen.extract_summaries_from_records(records, data)
-        unsorted_sentences = {}
-        # Iterate through the dictionary
-        for summary in summaries:
-            # Get result_data
-            result_data = summaries[summary]
-            document_id = result_data["document_id"]
-            if config.debug_summaries:
-                print(f"Got back summary {summary} with the " +
-                      f"correct document_id: {document_id}?")
-            suitable_sentences = riksdagen.find_usage_examples_from_summary(
-                word_spaces=data["word_spaces"],
-                summary=summary
-            )
-            if len(suitable_sentences) > 0:
-                for sentence in suitable_sentences:
-                    # Make sure the riksdagen_document_id follows
-                    unsorted_sentences[sentence] = result_data
-        if len(unsorted_sentences) > 0:
-            logging.debug(f"unsorted_sentences: {unsorted_sentences}")
-        print(f"Found {len(unsorted_sentences)} suitable sentences " +
-              "from the Riksdagen API")
-        return unsorted_sentences
+    riksdagen.get_records(data)
     # TODO K-samsök
     # TODO Europarl corpus
 
@@ -483,41 +459,115 @@ def present_sentence(
         return False
 
 
-def process_result(result):
-    data = extract_data(result)
+def save_to_exclude_list(data: dict):
+    # date, lid and lang
+    if data is None:
+        print("Error. Data was None")
+        exit(1)
+    logging.debug(f"data to exclude:{data}")
+    form_id = data["form_id"]
+    word = data["word"]
+    form_data = dict(
+        word=word,
+        date=datetime.now().isoformat(),
+        lang=config.language_code,
+    )
+    logging.debug(f"adding:{form_id}:{form_data}")
+    if os.path.isfile('exclude_list.json'):
+        logging.debug("File exist")
+        # Read the file
+        with open('exclude_list.json', 'r', encoding='utf-8') as myfile:
+            json_data = myfile.read()
+        if len(json_data) > 0:
+            with open('exclude_list.json', 'w', encoding='utf-8') as myfile:
+                # parse file
+                exclude_list = json.loads(json_data)
+                exclude_list[form_id] = form_data
+                logging.debug(f"dumping altered list:{exclude_list}")
+                json.dump(exclude_list, myfile, ensure_ascii=False)
+        else:
+            print("Error. json data is null.")
+            exit(1)
+    else:
+        logging.debug("File not exist")
+        # Create the file
+        with open("exclude_list.json", "w", encoding='utf-8') as outfile:
+            # Create new file with dict and item
+            exclude_list = {}
+            exclude_list[form_id] = form_data
+            logging.debug(f"dumping:{exclude_list}")
+            json.dump(exclude_list, outfile, ensure_ascii=False)
+
+
+def process_result(result, data):
     # ask to continue
-    if yes_no_question(f"\nWork on {data['word']}?"):
-        # This dict holds the sentence as key and
-        # riksdagen_document_id as value
-        sentences_and_result_data = get_sentences_from_apis(result)
+    # if yes_no_question(f"\nWork on {data['word']}?"):
+    # This dict holds the sentence as key and
+    # riksdagen_document_id as value
+    sentences_and_result_data = get_sentences_from_apis(result)
+    if sentences_and_result_data is not None:
         # Sort so that the shortest sentence is first
         sorted_sentences = sorted(
             sentences_and_result_data, key=len,
         )
-        if sentences_and_result_data is not None:
-            count = 1
-            # Loop through sentence list
-            for sentence in sorted_sentences:
-                print("Presenting sentence " +
-                      f"{count}/{len(sorted_sentences)}")
-                result_data = sentences_and_result_data[sentence]
-                document_id = result_data["document_id"]
-                date = result_data["date"]
-                if config.debug_sentences:
-                    print("with document_id: " +
-                          f"{document_id} from {date}")
-                result = present_sentence(
-                    data,
-                    sentence,
-                    document_id,
-                    date
-                )
-                count += 1
-                # Break out of the for loop by returning early because one
-                # example was already choosen for this result or if the form
-                # was skipped
-                if result or result is None:
-                    break
+        count = 1
+        # Loop through sentence list
+        for sentence in sorted_sentences:
+            print("Presenting sentence " +
+                  f"{count}/{len(sorted_sentences)}")
+            result_data = sentences_and_result_data[sentence]
+            document_id = result_data["document_id"]
+            date = result_data["date"]
+            if config.debug_sentences:
+                print("with document_id: " +
+                      f"{document_id} from {date}")
+            result = present_sentence(
+                data,
+                sentence,
+                document_id,
+                date
+            )
+            count += 1
+            # Break out of the for loop by returning early because one
+            # example was already choosen for this result or if the form
+            # was skipped
+            if result or result is None:
+                # Add to temporary exclude_list
+                logging.debug("adding to exclude list after presentation")
+                save_to_exclude_list(data)
+                # break
+                return
+    else:
+        print("Added to excludelist because of no " +
+              "suitable sentences were found")
+        save_to_exclude_list(data)
+
+
+def in_exclude_list(data: dict):
+    # Check if in exclude_list
+    if os.path.isfile('exclude_list.json'):
+        logging.debug("Looking up in exclude list")
+        # Read the file
+        with open('exclude_list.json', 'r', encoding='utf-8') as myfile:
+            json_data = myfile.read()
+            # parse file
+            exclude_list = json.loads(json_data)
+            lid = data["lid"]
+            for form_id in exclude_list:
+                form_data = exclude_list[form_id]
+                logging.debug(f"found:{form_data}")
+                if (
+                        # TODO check the date also
+                        lid == form_id
+                        and config.language_code == form_data["lang"]
+                ):
+                    logging.debug("Match found")
+                    return True
+        # Not found in exclude_list
+        return False
+    else:
+        # No exclude_list
+        return False
 
 
 def process_lexeme_data(results):
@@ -543,7 +593,19 @@ def process_lexeme_data(results):
             # Prevent running more than once for each result
             if result not in earlier_choices:
                 earlier_choices.append(result)
-                process_result(result)
+                data = extract_data(result)
+                word = data['word']
+                logging.debug(f"random choice:{word}")
+                if in_exclude_list(data):
+                    # Skip if found in the exclude_list
+                    logging.debug(
+                        f"Skipping result {word} found in exclude_list",
+                    )
+                    continue
+                else:
+                    # not in exclude_list
+                    logging.debug(f"processing:{word}")
+                    process_result(result, data)
 
 
 def introduction():
