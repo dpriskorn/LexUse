@@ -14,6 +14,22 @@ import config
 # Constants
 wd_prefix = "http://www.wikidata.org/entity/"
 
+#
+# Program flow
+#
+# Entry through process_lexeme_data()
+# Call in while loop
+#   if excluded:
+#     process_result()
+#       Call get_sentences_from_apis()
+#         Call riksdagen.get_records(data)
+#           See riksdagen.py for details
+#       for loop
+#         present_sentence()
+#           call prompt_sense_approval()
+#             if >1
+#               call prompt_choose_sense()
+
 
 def yes_no_skip_question(message: str):
     # https://www.quora.com/
@@ -335,6 +351,10 @@ def add_to_watchlist(lid):
 def prompt_sense_approval(sentence=None, data=None):
     """Prompts for validating that we have a sense matching the use example
     return dictionary with sense_id and sense_gloss if approved else False"""
+    # TODO split this up in multiple functions
+    # ->prepare_sense_selection()
+    # + prompt_single_sense()
+    # + prompt_multiple_senses()
     lid = data["lid"]
     # This returns a tuple if one sense or a dictionary if multiple senses
     senses = fetch_senses(lid)
@@ -404,7 +424,9 @@ def get_sentences_from_apis(result):
     print(f"Trying to find examples for the {data['category']} lexeme " +
           f"form: {word} with id: {form_id}")
     # Riksdagen API
-    riksdagen.get_records(data)
+    # We only have one source so return that for now
+    return riksdagen.get_records(data)
+
     # TODO K-samsök
     # TODO Europarl corpus
 
@@ -464,7 +486,8 @@ def save_to_exclude_list(data: dict):
     if data is None:
         print("Error. Data was None")
         exit(1)
-    logging.debug(f"data to exclude:{data}")
+    if config.debug_exclude_list:
+        logging.debug(f"data to exclude:{data}")
     form_id = data["form_id"]
     word = data["word"]
     form_data = dict(
@@ -472,9 +495,9 @@ def save_to_exclude_list(data: dict):
         date=datetime.now().isoformat(),
         lang=config.language_code,
     )
-    logging.debug(f"adding:{form_id}:{form_data}")
+    if config.debug_exclude_list:
+        logging.debug(f"adding:{form_id}:{form_data}")
     if os.path.isfile('exclude_list.json'):
-        logging.debug("File exist")
         # Read the file
         with open('exclude_list.json', 'r', encoding='utf-8') as myfile:
             json_data = myfile.read()
@@ -483,19 +506,20 @@ def save_to_exclude_list(data: dict):
                 # parse file
                 exclude_list = json.loads(json_data)
                 exclude_list[form_id] = form_data
-                logging.debug(f"dumping altered list:{exclude_list}")
+                if config.debug_exclude_list:
+                    logging.debug(f"dumping altered list:{exclude_list}")
                 json.dump(exclude_list, myfile, ensure_ascii=False)
         else:
             print("Error. json data is null.")
             exit(1)
     else:
-        logging.debug("File not exist")
         # Create the file
         with open("exclude_list.json", "w", encoding='utf-8') as outfile:
             # Create new file with dict and item
             exclude_list = {}
             exclude_list[form_id] = form_data
-            logging.debug(f"dumping:{exclude_list}")
+            if config.debug_exclude_list:
+                logging.debug(f"dumping:{exclude_list}")
             json.dump(exclude_list, outfile, ensure_ascii=False)
 
 
@@ -546,7 +570,8 @@ def process_result(result, data):
 def in_exclude_list(data: dict):
     # Check if in exclude_list
     if os.path.isfile('exclude_list.json'):
-        logging.debug("Looking up in exclude list")
+        if config.debug_exclude_list:
+            logging.debug("Looking up in exclude list")
         # Read the file
         with open('exclude_list.json', 'r', encoding='utf-8') as myfile:
             json_data = myfile.read()
@@ -555,7 +580,8 @@ def in_exclude_list(data: dict):
             lid = data["lid"]
             for form_id in exclude_list:
                 form_data = exclude_list[form_id]
-                logging.debug(f"found:{form_data}")
+                if config.debug_exclude_list:
+                    logging.debug(f"found:{form_data}")
                 if (
                         # TODO check the date also
                         lid == form_id

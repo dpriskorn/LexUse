@@ -66,7 +66,7 @@ def fetch(word):
                 print("API did not return any (more) results")
             break
     if config.debug:
-        print(f"Got {len(records)} records from the Riksdagen API")
+        logging.info(f"Got {len(records)} records from the Riksdagen API")
     if config.debug_json:
         print(records)
     return records
@@ -134,8 +134,10 @@ def find_usage_examples_from_summary(
                                     .replace("\n", "")
                                     .replace("-", "")
                                     .replace(ellipsis, ""))
-                        print(f"Found excluded word {excluded_word} " +
-                              f"in {sentence}. Skipping")
+                        logging.debug(
+                            f"Found excluded word {excluded_word} " +
+                            f"in {sentence}. Skipping",
+                        )
                     exclude_this_sentence = True
                     break
         # Add space to match better
@@ -153,6 +155,8 @@ def find_usage_examples_from_summary(
                         .replace("- ", "")
                         .replace(ellipsis, "")
                         .replace("  ", " "))
+            if config.debug_sentences:
+                logging.debug(f"suitable_sentence:{sentence}")
             suitable_sentences.append(sentence)
     return suitable_sentences
 
@@ -169,7 +173,7 @@ def extract_summaries_from_records(records, data):
     summaries = {}
     for record in records:
         if config.debug_summaries:
-            print(f"Working of record number {count_summary}")
+            logging.info(f"Working of record number {count_summary}")
         summary = record["summary"]
         # This is needed by present_sentence() and add_usage_example()
         # downstream
@@ -190,19 +194,19 @@ def extract_summaries_from_records(records, data):
                 count_exact_hits += 1
                 # add to dictionary
                 if config.debug_summaries:
-                    print(f"adding {summary} and {data} to summaries")
+                    logging.debug(f"found word_spaces or word_angle_parens in {summary}")
                 summaries[summary] = record_data
                 added = True
             else:
                 if config.debug_summaries:
-                    print("No exact hit in summary. Skipping.")
+                    logging.info("No exact hit in summary. Skipping.")
         else:
             if config.debug_summaries and added is False:
                 print(f"'{word}' not found as part of a word or a " +
                       "word in the summary. Skipping")
         count_summary += 1
-    if config.debug_summaries:
-        logging.debug(f"summaries:{summaries}")
+    # if config.debug_summaries:
+    #     logging.debug(f"summaries:{summaries}")
     print(f"Processed {count_summary} records and found " +
           f"{count_exact_hits} exact hits for the form '{word}'")
     logging.info(f"among {count_inexact_hits} where the lexeme was present.")
@@ -221,10 +225,10 @@ def get_records(data):
         for summary in summaries:
             # Get result_data
             result_data = summaries[summary]
-            document_id = result_data["document_id"]
-            if config.debug_summaries:
-                print(f"Got back summary {summary} with the " +
-                      f"correct document_id: {document_id}?")
+            # document_id = result_data["document_id"]
+            # if config.debug_summaries:
+            #     print(f"Got back summary {summary} with the " +
+            #           f"correct document_id: {document_id}?")
             suitable_sentences = find_usage_examples_from_summary(
                 word_spaces=data["word_spaces"],
                 summary=summary
@@ -233,6 +237,4 @@ def get_records(data):
                 for sentence in suitable_sentences:
                     # Make sure the riksdagen_document_id follows
                     unsorted_sentences[sentence] = result_data
-        if len(unsorted_sentences) > 0 and config.debug_sentences:
-            logging.debug(f"unsorted_sentences:{unsorted_sentences}")
         return unsorted_sentences

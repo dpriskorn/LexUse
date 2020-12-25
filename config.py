@@ -9,8 +9,8 @@ username = os.environ['LEXUSE_USERNAME']
 password = os.environ['LEXUSE_PASSWORD']
 
 # Settings
-sparql_results_size = 100
-sparql_offset = 500
+sparql_results_size = 1000
+sparql_offset = 0
 riksdagen_max_results_size = 260  # keep to multiples of 20
 language = "swedish"
 language_code = "sv"
@@ -19,12 +19,13 @@ min_word_count = 5
 max_word_count = 15
 debug = False
 debug_duplicates = False
-debug_excludes = False
+debug_excludes = True
+debug_exclude_list = False
 debug_json = False
-debug_riksdagen = False
-debug_senses = True
-debug_sentences = False
-debug_summaries = False
+debug_riksdagen = True
+debug_senses = False
+debug_sentences = True
+debug_summaries = True
 
 # Global variables
 login_instance = None
