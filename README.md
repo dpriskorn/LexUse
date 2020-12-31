@@ -1,3 +1,4 @@
+**PLEASE DON'T USE THIS SCRIPT UNTIL IT HAS BEEN UPDATED TO INCLUDE QUALIFIERS ON THE REFERENCES STATING WHETHER THE SOURCE IS FORMAL/INFORMAL AND IF IT'S WRITTEN/SPOKEN FORMS.**
 # LexUse
 Scripts used to find and add usage examples to Wikidata Lexemes. All scripts
 here are licensed under GPL-v3 or later unless they are snippets from someone
