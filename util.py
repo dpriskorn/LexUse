@@ -232,6 +232,7 @@ def add_usage_example(
     language_style_qualifier = wbi_core.ItemID(
         prop_nr="P6191",
         value=style,
+        is_qualifier=True
     )
     # oral or written
     if form_of_utterance == "written":
@@ -248,6 +249,7 @@ def add_usage_example(
     form_of_utterance_qualifier = wbi_core.ItemID(
         prop_nr="P3865",
         value=medium,
+        is_qualifier=True
     )
     reference = [
         wbi_core.ItemID(
@@ -286,8 +288,8 @@ def add_usage_example(
         qualifiers=[
             link_to_form,
             link_to_sense,
-            # language_style_qualifier,
-            # form_of_utterance_qualifier,
+            language_style_qualifier,
+            form_of_utterance_qualifier,
         ],
         # Add reference
         references=[reference],
