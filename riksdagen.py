@@ -6,6 +6,8 @@ import httpx
 import config
 import util
 
+baseurl = "https://data.riksdagen.se/dokument/"
+
 
 def get_result_count(word):
     # First find out the number of results
@@ -178,7 +180,13 @@ def extract_summaries_from_records(records, data):
         # This is needed by present_sentence() and add_usage_example()
         # downstream
         document_id = record["id"]
-        date = record["publicerad"]
+        # This date is the date it was published on the web after digitization
+        # and is useless to us
+        # date = record["publicerad"]
+        # This date should be when the document was published the first time but
+        # its not not always reliable because the dataset is of overall low
+        # quality it seems.
+        date = record["datum"]
         if config.debug_summaries:
             print(
                 f"Found in https://data.riksdagen.se/dokument/{document_id}"
@@ -225,6 +233,10 @@ def get_records(data):
         for summary in summaries:
             # Get result_data
             result_data = summaries[summary]
+            # Add information about the source (written,oral) and
+            # (formal,informal)
+            result_data["language_style"] = "formal"
+            result_data["form_of_utterance"] = "written"
             # document_id = result_data["document_id"]
             # if config.debug_summaries:
             #     print(f"Got back summary {summary} with the " +

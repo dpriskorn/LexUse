@@ -197,6 +197,8 @@ def add_usage_example(
         sense_id=None,
         word=None,
         publication_date=None,
+        language_style=None,
+        form_of_utterance=None,
 ):
     # Use WikibaseIntegrator aka wbi to upload the changes in one edit
     if publication_date is not None:
@@ -215,6 +217,37 @@ def add_usage_example(
         prop_nr="P6072",
         value=sense_id,
         is_qualifier=True
+    )
+    if language_style == "formal":
+        style = "Q104597585"
+    else:
+        if language_style == "informal":
+            style = "Q901711"
+        else:
+            print(f"Error. Language style {language_style} " +
+                  "not one of (formal,informal)")
+            exit(1)
+    logging.debug("Generating qualifier language_style " +
+                  f"with {style}")
+    language_style_qualifier = wbi_core.ItemID(
+        prop_nr="P6191",
+        value=style,
+    )
+    # oral or written
+    if form_of_utterance == "written":
+        medium = "Q47461344"
+    else:
+        if form_of_utterance == "oral":
+            medium = "Q52946"
+        else:
+            print(f"Error. Form of utterance {form_of_utterance} " +
+                  "not one of (written,oral)")
+            exit(1)
+    logging.debug("Generating qualifier form_of_uttance " +
+                  f"with {medium}")
+    form_of_utterance_qualifier = wbi_core.ItemID(
+        prop_nr="P3865",
+        value=medium,
     )
     reference = [
         wbi_core.ItemID(
@@ -244,13 +277,18 @@ def add_usage_example(
             is_reference=True,
         )
     ]
-    # This is th usage example statement
+    # This is the usage example statement
     claim = wbi_core.MonolingualText(
         sentence,
         "P5831",
         language=config.language_code,
         # Add qualifiers
-        qualifiers=[link_to_form, link_to_sense],
+        qualifiers=[
+            link_to_form,
+            link_to_sense,
+            language_style_qualifier,
+            form_of_utterance_qualifier,
+        ],
         # Add reference
         references=[reference],
     )
@@ -259,8 +297,8 @@ def add_usage_example(
     item = wbi_core.ItemEngine(
         data=[claim], append_value=["P5831"], item_id=lid,
     )
-    if config.debug_json:
-        print(item.get_json_representation())
+    # if config.debug_json:
+    #     print(item.get_json_representation())
     if config.login_instance is None:
         # Authenticate with WikibaseIntegrator
         print("Logging in with Wikibase Integrator")
@@ -271,6 +309,7 @@ def add_usage_example(
         config.login_instance,
         edit_summary="Added usage example with [[Wikidata:LexUse]]"
     )
+    result = None
     if config.debug_json:
         logging.debug(f"result from WBI:{result}")
     return result
@@ -426,16 +465,17 @@ def get_sentences_from_apis(result):
     # Riksdagen API
     # We only have one source so return that for now
     return riksdagen.get_records(data)
-
     # TODO K-samsök
     # TODO Europarl corpus
 
 
 def present_sentence(
-        data,
-        sentence,
-        document_id,
-        date
+        data: dict = None,
+        sentence: str = None,
+        document_id: str = None,
+        date: str = None,
+        language_style: str = None,
+        form_of_utterance: str = None,
 ):
     """Return True, False or None (skip)"""
     word_count = count_words(sentence)
@@ -464,11 +504,14 @@ def present_sentence(
                     sense_id=sense_id,
                     word=data["word"],
                     publication_date=date,
+                    language_style=language_style,
+                    form_of_utterance=form_of_utterance,
                 )
                 if result:
                     print("Successfully added usage example " +
                           f"to {wd_prefix + lid}")
                     add_to_watchlist(lid)
+                    save_to_exclude_list(data)
                     return True
                 else:
                     return False
@@ -486,10 +529,11 @@ def save_to_exclude_list(data: dict):
     if data is None:
         print("Error. Data was None")
         exit(1)
-    if config.debug_exclude_list:
-        logging.debug(f"data to exclude:{data}")
     form_id = data["form_id"]
     word = data["word"]
+    print(f"Adding {word} to exclude list")
+    if config.debug_exclude_list:
+        logging.debug(f"data to exclude:{data}")
     form_data = dict(
         word=word,
         date=datetime.now().isoformat(),
@@ -535,27 +579,35 @@ def process_result(result, data):
             sentences_and_result_data, key=len,
         )
         count = 1
-        # Loop through sentence list
+        # Loop through sentence list (that has no result data)
         for sentence in sorted_sentences:
-            print("Presenting sentence " +
-                  f"{count}/{len(sorted_sentences)}")
+            # We lookup the sentence in the original dict to get the
+            # result_data
             result_data = sentences_and_result_data[sentence]
             document_id = result_data["document_id"]
             date = result_data["date"]
-            if config.debug_sentences:
-                print("with document_id: " +
-                      f"{document_id} from {date}")
+            style = result_data["language_style"]
+            medium = result_data["form_of_utterance"]
+            print("Presenting sentence " +
+                  f"{count}/{len(sorted_sentences)} from {date} from " +
+                  f"{riksdagen.baseurl + document_id}")
+            logging.info(f"with style: {style} " +
+                         f"and medium: {medium}")
             result = present_sentence(
-                data,
-                sentence,
-                document_id,
-                date
+                data=data,
+                sentence=sentence,
+                document_id=document_id,
+                date=date,
+                language_style=style,
+                form_of_utterance=medium,
             )
             count += 1
             # Break out of the for loop by returning early because one
             # example was already choosen for this result or if the form
-            # was skipped
-            if result or result is None:
+            # was skipped. False means that we could not find a sentence, it
+            # could be related to low number of records being fetched so we dont
+            # excude it.
+            if result is not False:
                 # Add to temporary exclude_list
                 logging.debug("adding to exclude list after presentation")
                 save_to_exclude_list(data)

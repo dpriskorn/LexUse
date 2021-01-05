@@ -13,7 +13,7 @@ import util
 #
 
 
-def main():
+def setup_logging():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-l",
@@ -32,9 +32,12 @@ def main():
     else:
         logging.basicConfig()
     logging.captureWarnings(True)
+
+
+def main():
     # async_fetch_from_riksdagen("test")
     # exit(0)
-
+    setup_logging()
     begin = util.introduction()
     if begin:
         print("Fetching lexeme forms to work on")
