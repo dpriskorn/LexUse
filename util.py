@@ -286,8 +286,8 @@ def add_usage_example(
         qualifiers=[
             link_to_form,
             link_to_sense,
-            language_style_qualifier,
-            form_of_utterance_qualifier,
+            # language_style_qualifier,
+            # form_of_utterance_qualifier,
         ],
         # Add reference
         references=[reference],
@@ -309,7 +309,6 @@ def add_usage_example(
         config.login_instance,
         edit_summary="Added usage example with [[Wikidata:LexUse]]"
     )
-    result = None
     if config.debug_json:
         logging.debug(f"result from WBI:{result}")
     return result
