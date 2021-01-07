@@ -236,7 +236,7 @@ def get_records(data):
             # Add information about the source (written,oral) and
             # (formal,informal)
             result_data["language_style"] = "formal"
-            result_data["form_of_utterance"] = "written"
+            result_data["type_of_reference"] = "written"
             # document_id = result_data["document_id"]
             # if config.debug_summaries:
             #     print(f"Got back summary {summary} with the " +

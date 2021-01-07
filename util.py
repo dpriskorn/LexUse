@@ -17,9 +17,12 @@ import config
 try:
     assert sys.version_info >= (3, 7)
 except AssertionError:
-    print("Error! Your version of python is very old and not " +
+    print("Error! This script requires Python 3.7 minimum. " +
+          f"Your version of python: {sys.version[0:5]} " +
+          "is very old and not " +
           "supported by this script. Please upgrade python. " +
           "If you are on Ubuntu 18.04 we encourage you to upgrade Ubuntu.")
+    exit(0)
 
 # Constants
 wd_prefix = "http://www.wikidata.org/entity/"
@@ -208,7 +211,7 @@ def add_usage_example(
         word=None,
         publication_date=None,
         language_style=None,
-        form_of_utterance=None,
+        type_of_reference=None,
 ):
     # Use WikibaseIntegrator aka wbi to upload the changes in one edit
     if publication_date is not None:
@@ -245,18 +248,18 @@ def add_usage_example(
         is_qualifier=True
     )
     # oral or written
-    if form_of_utterance == "written":
+    if type_of_reference == "written":
         medium = "Q47461344"
     else:
-        if form_of_utterance == "oral":
+        if type_of_reference == "oral":
             medium = "Q52946"
         else:
-            print(f"Error. Form of utterance {form_of_utterance} " +
+            print(f"Error. Type of reference {type_of_reference} " +
                   "not one of (written,oral)")
             exit(1)
     logging.debug("Generating qualifier form_of_uttance " +
                   f"with {medium}")
-    form_of_utterance_qualifier = wbi_core.ItemID(
+    type_of_reference_qualifier = wbi_core.ItemID(
         prop_nr="P3865",
         value=medium,
         is_qualifier=True
@@ -287,7 +290,8 @@ def add_usage_example(
             prop_nr="P577",  # Publication date
             time=publication_date.strftime("+%Y-%m-%dT00:00:00Z"),
             is_reference=True,
-        )
+        ),
+        type_of_reference_qualifier,
     ]
     # This is the usage example statement
     claim = wbi_core.MonolingualText(
@@ -299,7 +303,6 @@ def add_usage_example(
             link_to_form,
             link_to_sense,
             language_style_qualifier,
-            form_of_utterance_qualifier,
         ],
         # Add reference
         references=[reference],
@@ -486,7 +489,7 @@ def present_sentence(
         document_id: str = None,
         date: str = None,
         language_style: str = None,
-        form_of_utterance: str = None,
+        type_of_reference: str = None,
 ):
     """Return True, False or None (skip)"""
     word_count = count_words(sentence)
@@ -516,7 +519,7 @@ def present_sentence(
                     word=data["word"],
                     publication_date=date,
                     language_style=language_style,
-                    form_of_utterance=form_of_utterance,
+                    type_of_reference=type_of_reference,
                 )
                 if result:
                     print("Successfully added usage example " +
@@ -598,7 +601,7 @@ def process_result(result, data):
             document_id = result_data["document_id"]
             date = result_data["date"]
             style = result_data["language_style"]
-            medium = result_data["form_of_utterance"]
+            medium = result_data["type_of_reference"]
             print("Presenting sentence " +
                   f"{count}/{len(sorted_sentences)} from {date} from " +
                   f"{riksdagen.baseurl + document_id}")
@@ -610,7 +613,7 @@ def process_result(result, data):
                 document_id=document_id,
                 date=date,
                 language_style=style,
-                form_of_utterance=medium,
+                type_of_reference=medium,
             )
             count += 1
             # Break out of the for loop by returning early because one
