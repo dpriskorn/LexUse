@@ -17,6 +17,10 @@ language_code = "sv"
 language_qid = "Q9027"
 min_word_count = 5
 max_word_count = 15
+show_sense_urls = True
+exclude_list = "exclude_list.json"
+
+# Debug settings
 debug = False
 debug_duplicates = False
 debug_excludes = True

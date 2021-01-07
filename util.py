@@ -347,6 +347,8 @@ def prompt_choose_sense(senses):
             # Put each key -> value into a new nested dictionary
             for sense in senses:
                 options += f"\n{number}) {senses[number]['gloss']}"
+                if config.show_sense_urls:
+                    options += f" ({wd_prefix + senses[number]['sense_id']})"
                 number += 1
             options += "\nPlease input a number or 0 to cancel: "
             choice = int(input(options))
@@ -545,7 +547,7 @@ def save_to_exclude_list(data: dict):
         exit(1)
     form_id = data["form_id"]
     word = data["word"]
-    print(f"Adding {word} to exclude list")
+    print(f"Adding {word} to local exclude list '{config.exclude_list}'")
     if config.debug_exclude_list:
         logging.debug(f"data to exclude:{data}")
     form_data = dict(
@@ -557,10 +559,10 @@ def save_to_exclude_list(data: dict):
         logging.debug(f"adding:{form_id}:{form_data}")
     if os.path.isfile('exclude_list.json'):
         # Read the file
-        with open('exclude_list.json', 'r', encoding='utf-8') as myfile:
+        with open(config.exclude_list, 'r', encoding='utf-8') as myfile:
             json_data = myfile.read()
         if len(json_data) > 0:
-            with open('exclude_list.json', 'w', encoding='utf-8') as myfile:
+            with open(config.exclude_list, 'w', encoding='utf-8') as myfile:
                 # parse file
                 exclude_list = json.loads(json_data)
                 exclude_list[form_id] = form_data
@@ -572,7 +574,7 @@ def save_to_exclude_list(data: dict):
             exit(1)
     else:
         # Create the file
-        with open("exclude_list.json", "w", encoding='utf-8') as outfile:
+        with open(config.exclude_list, "w", encoding='utf-8') as outfile:
             # Create new file with dict and item
             exclude_list = {}
             exclude_list[form_id] = form_data
