@@ -93,7 +93,7 @@ def find_usage_examples_from_summary(
     cleaned_summary = cleaned_summary.replace("dvs.", "qqq")
     # bl.a.
     cleaned_summary = cleaned_summary.replace("bl.", "zzz")
-    # TODO add "ang." "kl." "s.k." "resp."
+    # TODO add "ang." "kl." "s.k." "resp." "prop." "skr."
 
     # from https://stackoverflow.com/questions/3549075/
     # regex-to-find-all-sentences-of-text

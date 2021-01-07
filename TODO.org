@@ -1,0 +1,8 @@
+#+TITLE: Todo
+
+* Versioning
+* Rewrite as REPL
+* Enable selection of languages
+* Add support for Europeana
+** Add all languages present in their metadata (many EU languages)
+* Write tests
