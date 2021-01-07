@@ -4,6 +4,7 @@ import json
 import logging
 import os.path
 import random
+import sys
 import time
 # import asyncio
 import httpx
@@ -11,6 +12,15 @@ import riksdagen
 from wikibaseintegrator import wbi_core, wbi_login
 
 import config
+
+# Check version
+try:
+    assert sys.version_info >= (3, 7)
+except AssertionError:
+    print("Error! Your version of python is very old and not " +
+          "supported by this script. Please upgrade python. " +
+          "If you are on Ubuntu 18.04 we encourage you to upgrade Ubuntu.")
+
 # Constants
 wd_prefix = "http://www.wikidata.org/entity/"
 
@@ -606,8 +616,8 @@ def process_result(result, data):
             # Break out of the for loop by returning early because one
             # example was already choosen for this result or if the form
             # was skipped. False means that we could not find a sentence, it
-            # could be related to low number of records being fetched so we dont
-            # excude it.
+            # could be related to low number of records being fetched so we
+            # don't excude it.
             if result is not False:
                 # Add to temporary exclude_list
                 logging.debug("adding to exclude list after presentation")
