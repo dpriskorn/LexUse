@@ -342,19 +342,19 @@ def add_usage_example(
                 is_reference=True,
             ),
             wbi_core.Url(
-                prop_nr="P584",  # reference url
+                prop_nr="P854",  # reference url
                 value="http://www.statmt.org/europarl/v7/sv-en.tgz",
                 is_reference=True,
             ),
             wbi_core.String(
                 prop_nr="P7793",  # filename in archive
                 value=(f"europarl-v7.{config.language_code}" +
-                     f"-en.{config.language_code}"),
+                       f"-en.{config.language_code}"),
                 is_reference=True,
             ),
-            wbi_core.Number(
-                prop_nr="P7421",  # line
-                number=line,
+            wbi_core.Quantity(
+                prop_nr="P7421",  # line number
+                value=str(line),
                 is_reference=True,
             ),
             type_of_reference_qualifier,
@@ -414,7 +414,7 @@ def prompt_choose_sense(senses):
             for sense in senses:
                 options += f"\n{number}) {senses[number]['gloss']}"
                 if config.show_sense_urls:
-                    options += f" ({wd_prefix + senses[number]['sense_id']})"
+                    options += f" ({wd_prefix + senses[number]['sense_id']} )"
                 number += 1
             options += "\nPlease input a number or 0 to cancel: "
             choice = int(input(options))

@@ -10,7 +10,7 @@ password = os.environ['LEXUSE_PASSWORD']
 
 # Settings
 sparql_results_size = 1000
-sparql_offset = 0
+sparql_offset = 1000
 riksdagen_max_results_size = 260  # keep to multiples of 20
 language = "swedish"
 language_code = "sv"
