@@ -16,6 +16,10 @@ import europarl
 import loglevel
 import riksdagen
 
+# Terminology used
+# record = sentence + data
+# sentence = string of text
+
 # Check version
 try:
     assert sys.version_info >= (3, 7)
@@ -46,16 +50,21 @@ wd_prefix = "http://www.wikidata.org/entity/"
 #
 # Entry through process_lexeme_data()
 # Call in while loop
-#   if excluded:
+#   if not excluded:
 #     process_result()
 #       Call get_sentences_from_apis()
+#         Call europarl..get_records(data)
 #         Call riksdagen.get_records(data)
-#           See riksdagen.py for details
+#         Collect records in one big dictionary
 #       for loop
 #         present_sentence()
+#           Sort showing shortest first
 #           call prompt_sense_approval()
 #             if >1
 #               call prompt_choose_sense()
+#           Add usage example
+#           Add to watchlist
+#           Add form to exclude list to avoid duplicates caused by sparql lag
 
 
 def yes_no_skip_question(message: str):
@@ -210,10 +219,10 @@ def extract_data(result):
     )
 
 
-# async def async_fetch_from_url(url):
-#     async with httpx.AsyncClient() as client:
-#         response = await client.get(url)
-#         return response
+async def async_fetch_from_url(url):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        return response
 
 
 def add_usage_example(
@@ -332,13 +341,8 @@ def add_usage_example(
                 is_reference=True,
             ),
             wbi_core.Time(
-                prop_nr="P580",  # start time
-                time="+1996-00-00T00:00:00Z",
-                is_reference=True,
-            ),
-            wbi_core.Time(
-                prop_nr="P582",  # end time
-                time="+2011-00-00T00:00:00Z",
+                prop_nr="P577",  # Publication date
+                time="+2012-05-12T00:00:00Z",
                 is_reference=True,
             ),
             wbi_core.Url(
@@ -346,15 +350,17 @@ def add_usage_example(
                 value="http://www.statmt.org/europarl/v7/sv-en.tgz",
                 is_reference=True,
             ),
+            # filename in archive
             wbi_core.String(
-                prop_nr="P7793",  # filename in archive
-                value=(f"europarl-v7.{config.language_code}" +
-                       f"-en.{config.language_code}"),
+                (f"europarl-v7.{config.language_code}" +
+                 f"-en.{config.language_code}"),
+                "P7793",
                 is_reference=True,
             ),
-            wbi_core.Quantity(
-                prop_nr="P7421",  # line number
-                value=str(line),
+            # line number
+            wbi_core.String(
+                str(line),
+                "P7421",
                 is_reference=True,
             ),
             type_of_reference_qualifier,
@@ -560,10 +566,11 @@ def get_sentences_from_apis(result):
         europarl_records = europarl.get_records(data)
         for record in europarl_records:
             records[record] = europarl_records[record]
-        # Riksdagen API
-        riksdagen_records = riksdagen.get_records(data)
-        for record in riksdagen_records:
-            records[record] = riksdagen_records[record]
+        # Riksdagen API is slow, only use it if we must
+        if len(europarl_records) < 50:
+            riksdagen_records = riksdagen.get_records(data)
+            for record in riksdagen_records:
+                records[record] = riksdagen_records[record]
         logger.debug(f"returning from apis:{records}")
         return records
         # TODO K-samsök

@@ -22,5 +22,5 @@ def set_loglevel():
         print(f"Config loglevel set to {numeric_level}")
     else:
         # default to warning
-        print("Setting loglevel to 30 in config")
-        config.loglevel = 30
+        print("Setting loglevel to 40 in config")
+        config.loglevel = 40
