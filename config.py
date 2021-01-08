@@ -33,3 +33,4 @@ debug_summaries = True
 
 # Global variables
 login_instance = None
+loglevel = None

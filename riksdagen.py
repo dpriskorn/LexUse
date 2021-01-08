@@ -237,6 +237,8 @@ def get_records(data):
             # (formal,informal)
             result_data["language_style"] = "formal"
             result_data["type_of_reference"] = "written"
+            result_data["line"] = None
+            result_data["source"] = "riksdagen"
             # document_id = result_data["document_id"]
             # if config.debug_summaries:
             #     print(f"Got back summary {summary} with the " +

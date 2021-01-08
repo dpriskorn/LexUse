@@ -3,6 +3,11 @@
 * Versioning
 * Rewrite as REPL
 * Enable selection of languages
+* Europarl corpus
+** DONE Add support for it
+CLOSED: [2021-01-08 fre 02:12]
+** TODO Add all languages present in their metadata (many EU languages)
 * Add support for Europeana
 ** Add all languages present in their metadata (many EU languages)
+* Add support for K-samsök
 * Write tests
