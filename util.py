@@ -592,7 +592,7 @@ def present_sentence(
     result = yes_no_skip_question(
             f"Found the following sentence with {word_count} " +
             "words. Is it suitable as a usage example " +
-            f"for the form '{data['word']}'? \n" +
+            f"for the {data['category']} form '{data['word']}'? \n" +
             f"'{sentence}'"
     )
     if result:
