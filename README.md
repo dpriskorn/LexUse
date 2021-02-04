@@ -1,3 +1,6 @@
+# Warning
+This is a quick alpha version. Development continues in the [LexUtils repo](https://github.com/egils-consulting/LexUtils) and this repo will soon be archived. See all tool ideas from the author here: https://www.wikidata.org/wiki/User:So9q/Tool_ideas
+
 # LexUse
 Scripts used to find and add usage examples to Wikidata Lexemes. All scripts
 here are licensed under GPL-v3 or later unless they are snippets from someone
