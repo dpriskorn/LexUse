@@ -1,4 +1,6 @@
 # Warning
+**PLEASE DON'T USE IT BEFORE ISSUE 19 HAS BEEN FIXED**
+
 This is a quick alpha version. Development continues in the [LexUtils repo](https://github.com/egils-consulting/LexUtils) and this repo will soon be archived. See all tool ideas from the author here: https://www.wikidata.org/wiki/User:So9q/Tool_ideas
 
 # LexUse
